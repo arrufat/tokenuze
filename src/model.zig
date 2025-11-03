@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const MILLION = 1_000_000.0;
+pub const PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
 pub const TokenUsage = struct {
     input_tokens: u64 = 0,

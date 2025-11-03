@@ -2,7 +2,6 @@ const std = @import("std");
 const Model = @import("../model.zig");
 const timeutil = @import("../time.zig");
 
-const PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const LEGACY_FALLBACK_MODEL = "gpt-5";
 const JSON_EXT = ".jsonl";
 
@@ -956,7 +955,7 @@ fn fetchRemotePricing(
     var writer_ctx = CollectWriter.init(&buffer, allocator);
 
     const result = try client.fetch(.{
-        .location = .{ .url = PRICING_URL },
+        .location = .{ .url = Model.PRICING_URL },
         .response_writer = &writer_ctx.base,
     });
 
