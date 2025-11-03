@@ -850,7 +850,13 @@ fn fetchRemotePricing(
     allocator: std.mem.Allocator,
     pricing: *Model.PricingMap,
 ) !void {
-    var client = std.http.Client{ .allocator = allocator };
+    var io_threaded = std.Io.Threaded.init(allocator);
+    defer io_threaded.deinit();
+
+    var client = std.http.Client{
+        .allocator = allocator,
+        .io = io_threaded.io(),
+    };
     defer client.deinit();
 
     var buffer = std.ArrayListUnmanaged(u8){};
