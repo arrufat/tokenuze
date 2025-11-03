@@ -21,6 +21,7 @@ pub const TokenUsage = struct {
 pub const TokenUsageEvent = struct {
     session_id: []const u8,
     timestamp: []const u8,
+    local_iso_date: [10]u8,
     model: []const u8,
     usage: TokenUsage,
     is_fallback: bool,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Model = @import("../model.zig");
+const timeutil = @import("../time.zig");
 
 const PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const LEGACY_FALLBACK_MODEL = "gpt-5";
@@ -114,6 +115,7 @@ fn parseSessionFile(
 
         const timestamp_str = objectGetString(root, "timestamp") orelse continue;
         const timestamp = try duplicateNonEmpty(arena, timestamp_str) orelse continue;
+        const iso_date = timeutil.localIsoDateFromTimestamp(timestamp) catch continue;
 
         const info = objectGet(payload, "info");
         var raw: ?RawUsage = null;
@@ -166,6 +168,7 @@ fn parseSessionFile(
         const event = Model.TokenUsageEvent{
             .session_id = session_id,
             .timestamp = timestamp,
+            .local_iso_date = iso_date,
             .model = model_name.?,
             .usage = delta,
             .is_fallback = is_fallback,

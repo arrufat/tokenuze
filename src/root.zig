@@ -148,16 +148,15 @@ fn buildDailySummaries(
     filters: DateFilters,
 ) !void {
     for (events) |event| {
-        var iso_buffer: [10]u8 = undefined;
-        if (!extractIsoDate(event.timestamp, &iso_buffer)) continue;
-        if (!withinFilters(filters, iso_buffer[0..])) continue;
+        const iso_slice = event.local_iso_date[0..];
+        if (!withinFilters(filters, iso_slice)) continue;
 
-        if (date_index.get(iso_buffer[0..])) |idx| {
+        if (date_index.get(iso_slice)) |idx| {
             try updateSummary(&summaries.items[idx], allocator, arena, &event);
             continue;
         }
 
-        const iso_copy = try arena.dupe(u8, iso_buffer[0..]);
+        const iso_copy = try arena.dupe(u8, iso_slice);
         const display = try formatDisplayDate(arena, iso_copy);
         try summaries.append(allocator, DailySummary.init(allocator, iso_copy, display));
         const summary_idx = summaries.items.len - 1;
@@ -420,12 +419,6 @@ fn appendUniqueString(
         if (std.mem.eql(u8, existing, value)) return;
     }
     try list.append(allocator, value);
-}
-
-fn extractIsoDate(timestamp: []const u8, buffer: []u8) bool {
-    if (timestamp.len < 10 or buffer.len < 10) return false;
-    @memcpy(buffer[0..10], timestamp[0..10]);
-    return true;
 }
 
 fn formatDisplayDate(arena: std.mem.Allocator, iso_date: []const u8) ![]u8 {

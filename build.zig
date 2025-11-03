@@ -8,6 +8,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
+    mod.link_libc = true;
 
     const exe = b.addExecutable(.{
         .name = "tokenuze",
@@ -20,6 +21,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.root_module.link_libc = true;
 
     b.installArtifact(exe);
 
@@ -37,12 +39,14 @@ pub fn build(b: *std.Build) void {
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
+    mod_tests.root_module.link_libc = true;
 
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
+    exe_tests.root_module.link_libc = true;
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
