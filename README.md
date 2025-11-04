@@ -1,6 +1,6 @@
 # Tokenuze
 
-Tokenuze is a Zig CLI that summarizes OpenAI Codex and Gemini session usage. It scans `~/.codex/sessions` and `~/.gemini`, aggregates token counts per day and per model, and reports pricing using either the live LiteLLM pricing manifest or local fallbacks. Output is emitted as compact JSON, making it easy to feed into dashboards or further scripts.
+Tokenuze is a Zig CLI that summarizes OpenAI Codex and Gemini session usage. It scans `~/.codex/sessions` and `~/.gemini/tmp`, aggregates token counts per day and per model, and reports pricing using either the live LiteLLM pricing manifest or local fallbacks. Output is emitted as compact JSON, making it easy to feed into dashboards or further scripts.
 
 ## Requirements
 - Zig 0.12.0 or newer (stdlib is expected at `/usr/lib/zig/lib`)
