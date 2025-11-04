@@ -1,7 +1,11 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    const target = b.standardTargetOptions(.{
+        .default_target = .{
+            .abi = .musl,
+        },
+    });
     const optimize = b.standardOptimizeOption(.{});
 
     const mod = b.addModule("tokenuze", .{
@@ -23,6 +27,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.link_libc = true;
+    exe.linkage = .static;
 
     b.installArtifact(exe);
 
@@ -41,6 +46,7 @@ pub fn build(b: *std.Build) void {
         .root_module = mod,
     });
     mod_tests.root_module.link_libc = true;
+    mod_tests.linkage = .static;
 
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
@@ -48,6 +54,7 @@ pub fn build(b: *std.Build) void {
         .root_module = exe.root_module,
     });
     exe_tests.root_module.link_libc = true;
+    exe_tests.linkage = .static;
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
