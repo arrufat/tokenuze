@@ -61,14 +61,6 @@ pub fn run(allocator: std.mem.Allocator, filters: DateFilters) !void {
 
     // ... rest of file ...
 
-    var sort_phase = try PhaseTracker.start(progress_parent, "sort events", 0);
-    defer sort_phase.finish();
-    std.sort.pdq(Model.TokenUsageEvent, events.items, {}, eventLessThan);
-    std.log.info(
-        "phase.sort_events completed in {d:.2}ms (events={d})",
-        .{ sort_phase.elapsedMs(), events.items.len },
-    );
-
     var summaries = std.ArrayListUnmanaged(DailySummary){};
     defer {
         for (summaries.items) |*summary| {
@@ -168,16 +160,6 @@ fn flushOutput(writer: anytype) !void {
         error.WriteFailed => {},
         else => return err,
     };
-}
-
-fn eventLessThan(_: void, lhs: Model.TokenUsageEvent, rhs: Model.TokenUsageEvent) bool {
-    if (std.mem.eql(u8, lhs.timestamp, rhs.timestamp)) {
-        if (!std.mem.eql(u8, lhs.session_id, rhs.session_id)) {
-            return std.mem.lessThan(u8, lhs.session_id, rhs.session_id);
-        }
-        return std.mem.lessThan(u8, lhs.model, rhs.model);
-    }
-    return std.mem.lessThan(u8, lhs.timestamp, rhs.timestamp);
 }
 
 fn summaryLessThan(_: void, lhs: DailySummary, rhs: DailySummary) bool {
