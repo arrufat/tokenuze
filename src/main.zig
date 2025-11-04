@@ -91,10 +91,6 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
         return cliError("unexpected argument: {s}", .{arg});
     }
 
-    if (models_specified and !options.providers.include_codex and !options.providers.include_gemini) {
-        return cliError("at least one --model value must be provided", .{});
-    }
-
     if (options.machine_id) {
         if (options.filters.since != null or options.filters.until != null or options.filters.pretty_output or models_specified) {
             return cliError("--machine-id cannot be combined with other flags", .{});

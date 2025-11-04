@@ -109,6 +109,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             );
         }
 
+        fn logSessionWarning(file_path: []const u8, message: []const u8, err: anyerror) void {
+            std.log.warn(
+                "{s}: {s} '{s}' ({s})",
+                .{ provider_name, message, file_path, @errorName(err) },
+            );
+        }
+
         fn collectEvents(
             allocator: std.mem.Allocator,
             arena: std.mem.Allocator,
@@ -263,7 +270,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             var current_model: ?[]const u8 = null;
             var current_model_is_fallback = false;
             const max_session_size: usize = 128 * 1024 * 1024;
-            const file = std.fs.cwd().openFile(file_path, .{}) catch {
+            const file = std.fs.cwd().openFile(file_path, .{}) catch |err| {
+                logSessionWarning(file_path, "unable to open session file", err);
                 return;
             };
             defer file.close();
@@ -287,7 +295,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             while (true) {
                 partial_line.clearRetainingCapacity();
                 var writer_ctx = CollectWriter.init(&partial_line, allocator);
-                const streamed = reader.streamDelimiterEnding(&writer_ctx.base, '\n') catch {
+                const streamed = reader.streamDelimiterEnding(&writer_ctx.base, '\n') catch |err| {
+                    logSessionWarning(file_path, "error while reading session stream", err);
                     return;
                 };
 
@@ -297,7 +306,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         newline_consumed = false;
                         break :blk 0;
                     },
-                    else => return,
+                    else => {
+                        logSessionWarning(file_path, "error while advancing session stream", err);
+                        return;
+                    },
                 };
 
                 if (streamed == 0 and partial_line.items.len == 0 and !newline_consumed) {
@@ -333,12 +345,14 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             const max_session_size: usize = 32 * 1024 * 1024;
-            const file_data = std.fs.cwd().readFileAlloc(file_path, allocator, std.Io.Limit.limited(max_session_size)) catch {
+            const file_data = std.fs.cwd().readFileAlloc(file_path, allocator, std.Io.Limit.limited(max_session_size)) catch |err| {
+                logSessionWarning(file_path, "failed to read gemini session file", err);
                 return;
             };
             defer allocator.free(file_data);
 
-            var parsed = std.json.parseFromSlice(std.json.Value, allocator, file_data, .{}) catch {
+            var parsed = std.json.parseFromSlice(std.json.Value, allocator, file_data, .{}) catch |err| {
+                logSessionWarning(file_path, "failed to parse gemini session file", err);
                 return;
             };
             defer parsed.deinit();
