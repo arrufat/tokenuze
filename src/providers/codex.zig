@@ -244,60 +244,45 @@ fn parseSessionFile(
     };
     defer file.close();
 
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
+    var reader_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.readerStreaming(io, reader_buffer[0..]);
+    var reader = &file_reader.interface;
+
     var scanner = std.json.Scanner.initStreaming(allocator);
     defer scanner.deinit();
 
     var partial_line = std.ArrayListUnmanaged(u8){};
     defer partial_line.deinit(allocator);
 
-    var read_buffer: [64 * 1024]u8 = undefined;
-    var bytes_consumed: usize = 0;
+    var streamed_total: usize = 0;
+
     while (true) {
-        const read_bytes = file.read(&read_buffer) catch {
+        partial_line.clearRetainingCapacity();
+        var writer_ctx = CollectWriter.init(&partial_line, allocator);
+        const streamed = reader.streamDelimiterEnding(&writer_ctx.base, '\n') catch {
             return;
         };
-        if (read_bytes == 0) break;
-        bytes_consumed += read_bytes;
-        if (bytes_consumed > max_session_size) return;
-        var chunk = read_buffer[0..read_bytes];
-        while (chunk.len != 0) {
-            if (std.mem.indexOfScalar(u8, chunk, '\n')) |idx| {
-                if (partial_line.items.len == 0) {
-                    try processSessionLine(
-                        allocator,
-                        arena,
-                        &scanner,
-                        session_id,
-                        chunk[0..idx],
-                        events,
-                        &previous_totals,
-                        &current_model,
-                        &current_model_is_fallback,
-                    );
-                } else {
-                    try partial_line.appendSlice(allocator, chunk[0..idx]);
-                    try processSessionLine(
-                        allocator,
-                        arena,
-                        &scanner,
-                        session_id,
-                        partial_line.items,
-                        events,
-                        &previous_totals,
-                        &current_model,
-                        &current_model_is_fallback,
-                    );
-                    partial_line.clearRetainingCapacity();
-                }
-                chunk = chunk[idx + 1 ..];
-            } else {
-                try partial_line.appendSlice(allocator, chunk);
-                break;
-            }
-        }
-    }
 
-    if (partial_line.items.len != 0) {
+        var newline_consumed = true;
+        const discard_result = reader.discardDelimiterInclusive('\n') catch |err| switch (err) {
+            error.EndOfStream => blk: {
+                newline_consumed = false;
+                break :blk 0;
+            },
+            else => return,
+        };
+
+        if (streamed == 0 and partial_line.items.len == 0 and !newline_consumed) {
+            break;
+        }
+
+        streamed_total += streamed;
+        if (streamed_total > max_session_size) return;
+
         try processSessionLine(
             allocator,
             arena,
@@ -309,7 +294,10 @@ fn parseSessionFile(
             &current_model,
             &current_model_is_fallback,
         );
-        partial_line.clearRetainingCapacity();
+
+        if (!newline_consumed) break;
+        streamed_total += discard_result;
+        if (streamed_total > max_session_size) return;
     }
 }
 
