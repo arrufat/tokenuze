@@ -530,26 +530,15 @@ fn parsePayloadField(
     key: []const u8,
     payload_result: *PayloadResult,
 ) ParserError!void {
+    if (try parseSharedPayloadField(allocator, scanner, key, payload_result)) return;
+
     if (std.mem.eql(u8, key, "type")) {
         replaceToken(&payload_result.payload_type, allocator, try readStringToken(scanner, allocator));
         return;
     }
 
-    if (isModelKey(key)) {
-        const maybe_token = try readOptionalStringToken(scanner, allocator);
-        if (maybe_token) |token| {
-            captureModelToken(&payload_result.model, allocator, token);
-        }
-        return;
-    }
-
     if (std.mem.eql(u8, key, "info")) {
         try parseInfoObject(allocator, scanner, payload_result);
-        return;
-    }
-
-    if (std.mem.eql(u8, key, "metadata")) {
-        try parseModelValue(allocator, scanner, &payload_result.model);
         return;
     }
 
@@ -582,23 +571,14 @@ fn parseInfoField(
     key: []const u8,
     payload_result: *PayloadResult,
 ) ParserError!void {
+    if (try parseSharedPayloadField(allocator, scanner, key, payload_result)) return;
+
     if (std.mem.eql(u8, key, "last_token_usage")) {
         payload_result.last_usage = try parseUsageObject(allocator, scanner);
         return;
     }
     if (std.mem.eql(u8, key, "total_token_usage")) {
         payload_result.total_usage = try parseUsageObject(allocator, scanner);
-        return;
-    }
-    if (isModelKey(key)) {
-        const maybe_token = try readOptionalStringToken(scanner, allocator);
-        if (maybe_token) |token| {
-            captureModelToken(&payload_result.model, allocator, token);
-        }
-        return;
-    }
-    if (std.mem.eql(u8, key, "metadata")) {
-        try parseModelValue(allocator, scanner, &payload_result.model);
         return;
     }
 
@@ -715,6 +695,26 @@ fn parseModelValue(
         },
         else => try scanner.skipValue(),
     }
+}
+
+fn parseSharedPayloadField(
+    allocator: std.mem.Allocator,
+    scanner: *std.json.Scanner,
+    key: []const u8,
+    payload_result: *PayloadResult,
+) ParserError!bool {
+    if (isModelKey(key)) {
+        const maybe_token = try readOptionalStringToken(scanner, allocator);
+        if (maybe_token) |token| {
+            captureModelToken(&payload_result.model, allocator, token);
+        }
+        return true;
+    }
+    if (std.mem.eql(u8, key, "metadata")) {
+        try parseModelValue(allocator, scanner, &payload_result.model);
+        return true;
+    }
+    return false;
 }
 
 fn handlePayloadField(
