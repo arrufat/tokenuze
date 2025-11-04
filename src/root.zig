@@ -1,6 +1,7 @@
 const std = @import("std");
 const Model = @import("model.zig");
 const codex = @import("providers/codex.zig");
+const gemini = @import("providers/gemini.zig");
 const render = @import("render.zig");
 pub const machine_id = @import("machine_id.zig");
 
@@ -15,7 +16,39 @@ pub const DailySummary = Model.DailySummary;
 pub const SummaryTotals = Model.SummaryTotals;
 pub const parseFilterDate = Model.parseFilterDate;
 
-pub fn run(allocator: std.mem.Allocator, filters: DateFilters) !void {
+pub const ProviderId = enum {
+    codex,
+    gemini,
+};
+
+pub const ProviderSelection = struct {
+    include_codex: bool = true,
+    include_gemini: bool = true,
+
+    pub fn includes(self: ProviderSelection, id: ProviderId) bool {
+        return switch (id) {
+            .codex => self.include_codex,
+            .gemini => self.include_gemini,
+        };
+    }
+};
+
+const CollectFn = *const fn (
+    std.mem.Allocator,
+    std.mem.Allocator,
+    *Model.SummaryBuilder,
+    Model.DateFilters,
+    *Model.PricingMap,
+    ?std.Progress.Node,
+) anyerror!void;
+
+const ProviderSpec = struct {
+    id: ProviderId,
+    phase_label: []const u8,
+    collect: CollectFn,
+};
+
+pub fn run(allocator: std.mem.Allocator, filters: DateFilters, selection: ProviderSelection) !void {
     const disable_progress = !std.fs.File.stdout().isTty();
     var progress_root: std.Progress.Node = undefined;
     if (!disable_progress) {
@@ -37,13 +70,31 @@ pub fn run(allocator: std.mem.Allocator, filters: DateFilters) !void {
     var summary_builder = Model.SummaryBuilder.init(allocator);
     defer summary_builder.deinit(allocator);
 
-    var collect_phase = try PhaseTracker.start(progress_parent, "collect codex", 0);
-    defer collect_phase.finish();
-    try codex.collect(allocator, arena, &summary_builder, filters, &pricing_map, collect_phase.progress());
-    std.log.info(
-        "phase.collect completed in {d:.2}ms (events={d}, pricing_models={d})",
-        .{ collect_phase.elapsedMs(), summary_builder.eventCount(), pricing_map.count() },
-    );
+    const providers = [_]ProviderSpec{
+        .{ .id = .codex, .phase_label = "collect codex", .collect = codex.collect },
+        .{ .id = .gemini, .phase_label = "collect gemini", .collect = gemini.collect },
+    };
+
+    for (providers) |provider| {
+        if (!selection.includes(provider.id)) continue;
+        const before_events = summary_builder.eventCount();
+        const before_pricing = pricing_map.count();
+        var collect_phase = try PhaseTracker.start(progress_parent, provider.phase_label, 0);
+        try provider.collect(allocator, arena, &summary_builder, filters, &pricing_map, collect_phase.progress());
+        const elapsed = collect_phase.elapsedMs();
+        collect_phase.finish();
+        std.log.info(
+            "phase.{s} completed in {d:.2}ms (events += {d}, total_events={d}, pricing_models={d}, pricing_added={d})",
+            .{
+                provider.phase_label,
+                elapsed,
+                summary_builder.eventCount() - before_events,
+                summary_builder.eventCount(),
+                pricing_map.count(),
+                pricing_map.count() - before_pricing,
+            },
+        );
+    }
 
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);

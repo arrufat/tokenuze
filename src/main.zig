@@ -8,6 +8,7 @@ const CliError = error{
 const CliOptions = struct {
     filters: tokenuze.DateFilters = .{},
     machine_id: bool = false,
+    providers: tokenuze.ProviderSelection = .{},
 };
 
 pub fn main() !void {
@@ -22,7 +23,7 @@ pub fn main() !void {
         try printMachineId(allocator);
         return;
     }
-    try tokenuze.run(allocator, options.filters);
+    try tokenuze.run(allocator, options.filters, options.providers);
 }
 
 fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
@@ -32,6 +33,7 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
     _ = args.next(); // program name
 
     var options = CliOptions{};
+    var models_specified = false;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--since")) {
             const value = args.next() orelse return cliError("missing value for --since", .{});
@@ -66,6 +68,22 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--model")) {
+            const value = args.next() orelse return cliError("missing value for --model", .{});
+            if (!models_specified) {
+                models_specified = true;
+                options.providers = .{ .include_codex = false, .include_gemini = false };
+            }
+            if (std.mem.eql(u8, value, "codex")) {
+                options.providers.include_codex = true;
+            } else if (std.mem.eql(u8, value, "gemini")) {
+                options.providers.include_gemini = true;
+            } else {
+                return cliError("unknown model '{s}' (expected 'codex' or 'gemini')", .{value});
+            }
+            continue;
+        }
+
         if (std.mem.startsWith(u8, arg, "-")) {
             return cliError("unknown option: {s}", .{arg});
         }
@@ -73,8 +91,12 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
         return cliError("unexpected argument: {s}", .{arg});
     }
 
+    if (models_specified and !options.providers.include_codex and !options.providers.include_gemini) {
+        return cliError("at least one --model value must be provided", .{});
+    }
+
     if (options.machine_id) {
-        if (options.filters.since != null or options.filters.until != null or options.filters.pretty_output) {
+        if (options.filters.since != null or options.filters.until != null or options.filters.pretty_output or models_specified) {
             return cliError("--machine-id cannot be combined with other flags", .{});
         }
     }
