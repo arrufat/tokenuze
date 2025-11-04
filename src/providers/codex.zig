@@ -14,22 +14,11 @@ const FALLBACK_PRICING = [_]struct {
 };
 
 const RawUsage = Model.RawTokenUsage;
-
-const TokenString = struct {
-    slice: []const u8,
-    owned: ?[]u8 = null,
-
-    fn release(self: *TokenString, allocator: std.mem.Allocator) void {
-        if (self.owned) |buf| {
-            allocator.free(buf);
-        }
-        self.* = undefined;
-    }
-};
+const TokenString = Model.TokenBuffer;
 
 const PayloadResult = struct {
-    payload_type: ?TokenString = null,
-    model: ?TokenString = null,
+    payload_type: ?Model.TokenBuffer = null,
+    model: ?Model.TokenBuffer = null,
     last_usage: ?RawUsage = null,
     total_usage: ?RawUsage = null,
 
@@ -261,7 +250,7 @@ fn parseSessionFile(
         if (start_token != .object_begin) continue;
 
         var payload_result = PayloadResult{};
-        var timestamp_token: ?TokenString = null;
+        var timestamp_token: ?Model.TokenBuffer = null;
         var is_turn_context = false;
         var is_event_msg = false;
         var parse_failed = false;
@@ -275,7 +264,7 @@ fn parseSessionFile(
             switch (key_token) {
                 .object_end => break,
                 .string => |slice| {
-                    var key = TokenString{ .slice = slice, .owned = null };
+                    var key = Model.TokenBuffer{ .slice = slice, .owned = null };
                     defer key.release(allocator);
                     parseObjectField(
                         allocator,
@@ -290,7 +279,7 @@ fn parseSessionFile(
                     };
                 },
                 .allocated_string => |buf| {
-                    var key = TokenString{ .slice = buf, .owned = buf };
+                    var key = Model.TokenBuffer{ .slice = buf, .owned = buf };
                     defer key.release(allocator);
                     parseObjectField(
                         allocator,
@@ -680,16 +669,7 @@ fn parseUsageObject(
 
     _ = try scanner.next();
 
-    var usage = RawUsage{
-        .input_tokens = 0,
-        .cached_input_tokens = 0,
-        .output_tokens = 0,
-        .reasoning_output_tokens = 0,
-        .total_tokens = 0,
-    };
-
-    var cached_direct: ?u64 = null;
-    var cached_fallback: ?u64 = null;
+    var accumulator = Model.UsageAccumulator{};
 
     while (true) {
         const key_token = try scanner.nextAlloc(allocator, .alloc_if_needed);
@@ -698,60 +678,54 @@ fn parseUsageObject(
             .string => |slice| {
                 var key = TokenString{ .slice = slice };
                 defer key.release(allocator);
-                try parseUsageField(allocator, scanner, key.slice, &usage, &cached_direct, &cached_fallback);
+                try parseUsageField(allocator, scanner, key.slice, &accumulator);
             },
             .allocated_string => |buf| {
                 var key = TokenString{ .slice = buf, .owned = buf };
                 defer key.release(allocator);
-                try parseUsageField(allocator, scanner, key.slice, &usage, &cached_direct, &cached_fallback);
+                try parseUsageField(allocator, scanner, key.slice, &accumulator);
             },
             else => return ParseError.UnexpectedToken,
         }
     }
 
-    if (cached_direct) |value| {
-        if (value > 0) {
-            usage.cached_input_tokens = value;
-        } else if (cached_fallback) |fallback| {
-            usage.cached_input_tokens = fallback;
-        }
-    } else if (cached_fallback) |fallback| {
-        usage.cached_input_tokens = fallback;
-    }
-
-    return usage;
+    return accumulator.finalize();
 }
 
 fn parseUsageField(
     allocator: std.mem.Allocator,
     scanner: *std.json.Scanner,
     key: []const u8,
-    usage: *RawUsage,
-    cached_direct: *?u64,
-    cached_fallback: *?u64,
+    accumulator: *Model.UsageAccumulator,
 ) ParserError!void {
     if (std.mem.eql(u8, key, "input_tokens")) {
-        usage.input_tokens = try parseU64Value(scanner, allocator);
+        const value = try parseU64Value(scanner, allocator);
+        accumulator.applyField(key, value);
         return;
     }
     if (std.mem.eql(u8, key, "cached_input_tokens")) {
-        cached_direct.* = try parseU64Value(scanner, allocator);
+        const value = try parseU64Value(scanner, allocator);
+        accumulator.applyField(key, value);
         return;
     }
     if (std.mem.eql(u8, key, "cache_read_input_tokens")) {
-        cached_fallback.* = try parseU64Value(scanner, allocator);
+        const value = try parseU64Value(scanner, allocator);
+        accumulator.applyField(key, value);
         return;
     }
     if (std.mem.eql(u8, key, "output_tokens")) {
-        usage.output_tokens = try parseU64Value(scanner, allocator);
+        const value = try parseU64Value(scanner, allocator);
+        accumulator.applyField(key, value);
         return;
     }
     if (std.mem.eql(u8, key, "reasoning_output_tokens")) {
-        usage.reasoning_output_tokens = try parseU64Value(scanner, allocator);
+        const value = try parseU64Value(scanner, allocator);
+        accumulator.applyField(key, value);
         return;
     }
     if (std.mem.eql(u8, key, "total_tokens")) {
-        usage.total_tokens = try parseU64Value(scanner, allocator);
+        const value = try parseU64Value(scanner, allocator);
+        accumulator.applyField(key, value);
         return;
     }
 
@@ -827,22 +801,10 @@ fn parseU64Value(scanner: *std.json.Scanner, allocator: std.mem.Allocator) Parse
         .number => {
             var number = try readNumberToken(scanner, allocator);
             defer number.release(allocator);
-            return parseNumberSlice(number.slice);
+            return Model.parseTokenNumber(number.slice);
         },
         else => return ParseError.UnexpectedToken,
     }
-}
-
-fn parseNumberSlice(slice: []const u8) u64 {
-    if (slice.len == 0) return 0;
-    if (std.mem.indexOfScalar(u8, slice, '.')) |_| {
-        const parsed = std.fmt.parseFloat(f64, slice) catch return 0;
-        return if (parsed >= 0)
-            @as(u64, @intFromFloat(std.math.floor(parsed)))
-        else
-            0;
-    }
-    return std.fmt.parseInt(u64, slice, 10) catch 0;
 }
 
 fn loadPricing(

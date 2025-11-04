@@ -89,6 +89,74 @@ pub const RawTokenUsage = struct {
     total_tokens: u64 = 0,
 };
 
+pub const TokenBuffer = struct {
+    slice: []const u8,
+    owned: ?[]u8 = null,
+
+    pub fn release(self: *TokenBuffer, allocator: std.mem.Allocator) void {
+        if (self.owned) |buf| allocator.free(buf);
+        self.* = undefined;
+    }
+};
+
+pub const UsageAccumulator = struct {
+    raw: RawTokenUsage = .{},
+    cached_direct: ?u64 = null,
+    cached_fallback: ?u64 = null,
+
+    pub fn applyField(self: *UsageAccumulator, key: []const u8, value: u64) void {
+        if (std.mem.eql(u8, key, "input_tokens")) {
+            self.raw.input_tokens = value;
+            return;
+        }
+        if (std.mem.eql(u8, key, "cached_input_tokens")) {
+            self.cached_direct = value;
+            return;
+        }
+        if (std.mem.eql(u8, key, "cache_read_input_tokens")) {
+            self.cached_fallback = value;
+            return;
+        }
+        if (std.mem.eql(u8, key, "output_tokens")) {
+            self.raw.output_tokens = value;
+            return;
+        }
+        if (std.mem.eql(u8, key, "reasoning_output_tokens")) {
+            self.raw.reasoning_output_tokens = value;
+            return;
+        }
+        if (std.mem.eql(u8, key, "total_tokens")) {
+            self.raw.total_tokens = value;
+            return;
+        }
+    }
+
+    pub fn finalize(self: *UsageAccumulator) RawTokenUsage {
+        if (self.cached_direct) |direct| {
+            if (direct > 0) {
+                self.raw.cached_input_tokens = direct;
+            } else if (self.cached_fallback) |fallback| {
+                self.raw.cached_input_tokens = fallback;
+            }
+        } else if (self.cached_fallback) |fallback| {
+            self.raw.cached_input_tokens = fallback;
+        }
+        return self.raw;
+    }
+};
+
+pub fn parseTokenNumber(slice: []const u8) u64 {
+    if (slice.len == 0) return 0;
+    if (std.mem.indexOfScalar(u8, slice, '.')) |_| {
+        const parsed = std.fmt.parseFloat(f64, slice) catch return 0;
+        return if (parsed >= 0)
+            @as(u64, @intFromFloat(std.math.floor(parsed)))
+        else
+            0;
+    }
+    return std.fmt.parseInt(u64, slice, 10) catch 0;
+}
+
 pub const TokenUsageEvent = struct {
     session_id: []const u8,
     timestamp: []const u8,
