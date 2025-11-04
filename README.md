@@ -9,11 +9,17 @@ Tokenuze is a Zig CLI that summarizes OpenAI Codex session usage. It scans `~/.c
 
 ## Quick Start
 ```bash
-zig build           # compile the debug binary
+zig build                     # compile the debug binary
 zig build run -- --since 20250101
 zig build run -- --since 20250101 --until 20250107
-zig build -Drelease-fast run -- --since 20250101  # faster benchmarking runs
+zig build --release=fast run -- --since 20250101  # faster benchmarking runs
 ```
+
+## Command-Line Options
+- `--since YYYYMMDD` limits processing to events on/after the specified local date.
+- `--until YYYYMMDD` caps the range; must be >= `--since` when both are present.
+- `--pretty` enables indented JSON output (handy when reading the payload manually).
+- `--machine-id` prints the cached/generated machine identifier and exits (no summaries).
 
 ## What It Produces
 Tokenuze prints a JSON payload shaped like:
