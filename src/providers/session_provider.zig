@@ -87,8 +87,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         const ParserError = ParseError || ScannerAllocError || ScannerSkipError || ScannerNextError || ScannerPeekError;
 
         pub fn collect(
-            allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
+            shared_allocator: std.mem.Allocator,
+            thread_allocator: std.mem.Allocator,
             summaries: *Model.SummaryBuilder,
             filters: Model.DateFilters,
             pricing: *Model.PricingMap,
@@ -104,7 +104,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
             var events_timer = try std.time.Timer.start();
             const before_events = summaries.eventCount();
-            try collectEvents(allocator, arena, summaries, filters, events_progress);
+            try collectEvents(shared_allocator, thread_allocator, summaries, filters, events_progress);
             const after_events = summaries.eventCount();
             if (events_progress) |node| std.Progress.Node.end(node);
             std.log.info(
@@ -118,7 +118,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
             var pricing_timer = try std.time.Timer.start();
             const before_pricing = pricing.count();
-            try loadPricing(arena, allocator, pricing);
+            try loadPricing(shared_allocator, thread_allocator, pricing);
             const after_pricing = pricing.count();
             if (pricing_progress) |node| std.Progress.Node.end(node);
             std.log.info(
@@ -140,15 +140,15 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         }
 
         fn collectEvents(
-            allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
+            shared_allocator: std.mem.Allocator,
+            thread_allocator: std.mem.Allocator,
             summaries: *Model.SummaryBuilder,
             filters: Model.DateFilters,
             progress: ?std.Progress.Node,
         ) !void {
             const SharedContext = struct {
-                allocator: std.mem.Allocator,
-                arena: std.mem.Allocator,
+                shared_allocator: std.mem.Allocator,
+                thread_allocator: std.mem.Allocator,
                 summaries: *Model.SummaryBuilder,
                 builder_mutex: *std.Thread.Mutex,
                 filters: Model.DateFilters,
@@ -160,23 +160,27 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             const ProcessFn = struct {
                 fn run(shared: *SharedContext, path: []u8) void {
-                    defer shared.allocator.free(path);
+                    defer shared.thread_allocator.free(path);
                     defer _ = shared.files_inflight.fetchSub(1, .acq_rel);
                     defer _ = shared.files_scanned.fetchAdd(1, .acq_rel);
                     defer if (shared.progress) |node| std.Progress.Node.completeOne(node);
+                    var worker_arena_state = std.heap.ArenaAllocator.init(shared.thread_allocator);
+                    defer worker_arena_state.deinit();
+                    const worker_allocator = worker_arena_state.allocator();
+
                     var local_events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
-                    defer local_events.deinit(shared.allocator);
+                    defer local_events.deinit(worker_allocator);
 
                     const basename = std.fs.path.basename(path);
                     if (basename.len <= JSON_EXT.len or !std.mem.endsWith(u8, basename, JSON_EXT)) return;
                     const session_id_slice = basename[0 .. basename.len - JSON_EXT.len];
 
-                    const maybe_session_id = duplicateNonEmpty(shared.arena, session_id_slice) catch {
+                    const maybe_session_id = duplicateNonEmpty(worker_allocator, session_id_slice) catch {
                         return;
                     };
                     const session_id = maybe_session_id orelse return;
 
-                    parseSessionFile(shared.allocator, shared.arena, session_id, path, shared.deduper, &local_events) catch {
+                    parseSessionFile(worker_allocator, session_id, path, shared.deduper, &local_events) catch {
                         return;
                     };
 
@@ -185,7 +189,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     shared.builder_mutex.lock();
                     defer shared.builder_mutex.unlock();
                     for (local_events.items) |*event| {
-                        shared.summaries.ingest(shared.allocator, shared.arena, event, shared.filters) catch {
+                        shared.summaries.ingest(shared.shared_allocator, event, shared.filters) catch {
                             return;
                         };
                     }
@@ -194,11 +198,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             var timer = try std.time.Timer.start();
 
-            const sessions_dir = resolveSessionsDir(allocator) catch |err| {
+            const sessions_dir = resolveSessionsDir(shared_allocator) catch |err| {
                 std.log.info("{s}.collectEvents: skipping, unable to resolve sessions dir ({s})", .{ provider_name, @errorName(err) });
                 return;
             };
-            defer allocator.free(sessions_dir);
+            defer shared_allocator.free(sessions_dir);
 
             var root_dir = std.fs.openDirAbsolute(sessions_dir, .{ .iterate = true }) catch |err| {
                 std.log.info(
@@ -209,22 +213,21 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             };
             defer root_dir.close();
 
-            var walker = try root_dir.walk(allocator);
+            var walker = try root_dir.walk(shared_allocator);
             defer walker.deinit();
 
             var builder_mutex = std.Thread.Mutex{};
 
-            var thread_safe_arena = std.heap.ThreadSafeAllocator{ .child_allocator = arena };
             var files_scanned = std.atomic.Value(usize).init(0);
             var files_inflight = std.atomic.Value(usize).init(0);
             var deduper_storage: ?MessageDeduper = null;
             defer if (deduper_storage) |*ded| ded.deinit();
             if (STRATEGY == .claude) {
-                deduper_storage = try MessageDeduper.init(allocator);
+                deduper_storage = try MessageDeduper.init(thread_allocator);
             }
             var shared = SharedContext{
-                .allocator = allocator,
-                .arena = thread_safe_arena.allocator(),
+                .shared_allocator = shared_allocator,
+                .thread_allocator = thread_allocator,
                 .summaries = summaries,
                 .builder_mutex = &builder_mutex,
                 .filters = filters,
@@ -234,7 +237,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .deduper = if (deduper_storage) |*ded| ded else null,
             };
 
-            var threaded = std.Io.Threaded.init(allocator);
+            var threaded = std.Io.Threaded.init(thread_allocator);
             defer threaded.deinit();
 
             const io = threaded.io();
@@ -245,7 +248,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 const relative_path = std.mem.sliceTo(entry.path, 0);
                 if (!std.mem.endsWith(u8, relative_path, JSON_EXT)) continue;
 
-                const absolute_path = try std.fs.path.join(allocator, &.{ sessions_dir, relative_path });
+                const absolute_path = try std.fs.path.join(thread_allocator, &.{ sessions_dir, relative_path });
                 _ = shared.files_inflight.fetchAdd(1, .acq_rel);
                 group.async(io, ProcessFn.run, .{ &shared, absolute_path });
 
@@ -278,22 +281,20 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn parseSessionFile(
             allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             switch (STRATEGY) {
-                .codex => try parseCodexSessionFile(allocator, arena, session_id, file_path, deduper, events),
-                .gemini => try parseGeminiSessionFile(allocator, arena, session_id, file_path, deduper, events),
-                .claude => try parseClaudeSessionFile(allocator, arena, session_id, file_path, deduper, events),
+                .codex => try parseCodexSessionFile(allocator, session_id, file_path, deduper, events),
+                .gemini => try parseGeminiSessionFile(allocator, session_id, file_path, deduper, events),
+                .claude => try parseClaudeSessionFile(allocator, session_id, file_path, deduper, events),
             }
         }
 
         fn parseCodexSessionFile(
             allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
@@ -355,7 +356,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
                 try processSessionLine(
                     allocator,
-                    arena,
                     &scanner,
                     session_id,
                     partial_line.items,
@@ -373,7 +373,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn parseGeminiSessionFile(
             allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
@@ -403,7 +402,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             if (session_obj.get("sessionId")) |sid_value| {
                 switch (sid_value) {
                     .string => |slice| {
-                        if (try duplicateNonEmpty(arena, slice)) |dup| {
+                        if (try duplicateNonEmpty(allocator, slice)) |dup| {
                             session_label = dup;
                         }
                     },
@@ -436,7 +435,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                             .string => |slice| slice,
                             else => continue,
                         };
-                        const timestamp_copy = try duplicateNonEmpty(arena, timestamp_slice) orelse continue;
+                        const timestamp_copy = try duplicateNonEmpty(allocator, timestamp_slice) orelse continue;
                         const iso_date = timeutil.localIsoDateFromTimestamp(timestamp_copy) catch {
                             continue;
                         };
@@ -444,7 +443,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         if (msg_obj.get("model")) |model_value| {
                             switch (model_value) {
                                 .string => |slice| {
-                                    if (try duplicateNonEmpty(arena, slice)) |model_copy| {
+                                    if (try duplicateNonEmpty(allocator, slice)) |model_copy| {
                                         current_model = model_copy;
                                         current_model_is_fallback = false;
                                     }
@@ -515,7 +514,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn parseClaudeSessionFile(
             allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
@@ -578,7 +576,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     line_index += 1;
                     try handleClaudeLine(
                         allocator,
-                        arena,
                         trimmed,
                         line_index,
                         file_path,
@@ -599,7 +596,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn handleClaudeLine(
             allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
             line: []const u8,
             line_index: usize,
             file_path: []const u8,
@@ -628,7 +624,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 if (record.get("sessionId")) |sid_value| {
                     switch (sid_value) {
                         .string => |slice| {
-                            const duplicate = duplicateNonEmpty(arena, slice) catch null;
+                            const duplicate = duplicateNonEmpty(allocator, slice) catch null;
                             if (duplicate) |dup| {
                                 session_label.* = dup;
                                 session_label_overridden.* = true;
@@ -641,7 +637,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             try emitClaudeEvent(
                 allocator,
-                arena,
                 record,
                 deduper,
                 session_label.*,
@@ -653,7 +648,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn emitClaudeEvent(
             allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
             record: std.json.ObjectMap,
             deduper: ?*MessageDeduper,
             session_label: []const u8,
@@ -689,7 +683,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .string => |slice| slice,
                 else => return,
             };
-            const timestamp_copy = duplicateNonEmpty(arena, timestamp_slice) catch return;
+            const timestamp_copy = duplicateNonEmpty(allocator, timestamp_slice) catch return;
             const owned_timestamp = timestamp_copy orelse return;
             const iso_date = timeutil.localIsoDateFromTimestamp(owned_timestamp) catch {
                 return;
@@ -699,7 +693,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             if (message_obj.get("model")) |model_value| {
                 switch (model_value) {
                     .string => |slice| {
-                        const duplicated = duplicateNonEmpty(arena, slice) catch null;
+                        const duplicated = duplicateNonEmpty(allocator, slice) catch null;
                         if (duplicated) |dup| {
                             extracted_model = dup;
                         }
@@ -1116,7 +1110,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn processSessionLine(
             allocator: std.mem.Allocator,
-            arena: std.mem.Allocator,
             scanner: *std.json.Scanner,
             session_id: []const u8,
             line: []const u8,
@@ -1198,7 +1191,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     var model_token = token;
                     payload_result.model = null;
                     if (model_token.slice.len != 0) {
-                        const duplicated = duplicateNonEmpty(arena, model_token.slice) catch null;
+                        const duplicated = duplicateNonEmpty(allocator, model_token.slice) catch null;
                         if (duplicated) |model_copy| {
                             current_model.* = model_copy;
                             current_model_is_fallback.* = false;
@@ -1219,7 +1212,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             var raw_timestamp = timestamp_token.?;
             timestamp_token = null;
-            const timestamp_copy = try duplicateNonEmpty(arena, raw_timestamp.slice) orelse {
+            const timestamp_copy = try duplicateNonEmpty(allocator, raw_timestamp.slice) orelse {
                 raw_timestamp.release(allocator);
                 return;
             };
@@ -1251,7 +1244,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 var model_token = token;
                 payload_result.model = null;
                 if (model_token.slice.len != 0) {
-                    extracted_model = try duplicateNonEmpty(arena, model_token.slice);
+                    extracted_model = try duplicateNonEmpty(allocator, model_token.slice);
                     if (extracted_model == null) extracted_model = current_model.*;
                 }
                 model_token.release(allocator);
@@ -1355,8 +1348,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         }
 
         fn loadPricing(
-            arena: std.mem.Allocator,
-            allocator: std.mem.Allocator,
+            shared_allocator: std.mem.Allocator,
+            thread_allocator: std.mem.Allocator,
             pricing: *Model.PricingMap,
         ) !void {
             var total_timer = try std.time.Timer.start();
@@ -1368,7 +1361,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 fetch_attempted = true;
                 var fetch_timer = try std.time.Timer.start();
                 const before_fetch = pricing.count();
-                fetchRemotePricing(arena, allocator, pricing) catch |err| {
+                fetchRemotePricing(shared_allocator, thread_allocator, pricing) catch |err| {
                     fetch_ok = false;
                     fetch_error = err;
                 };
@@ -1393,7 +1386,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             const had_pricing = pricing.count() != 0;
             var fallback_timer = try std.time.Timer.start();
-            try ensureFallbackPricing(arena, pricing);
+            try ensureFallbackPricing(shared_allocator, pricing);
             std.log.info(
                 "{s}.loadPricing: {s} fallback pricing in {d:.2}ms (models={d})",
                 .{ provider_name, if (had_pricing) "ensured" else "inserted", nsToMs(fallback_timer.read()), pricing.count() },
@@ -1406,16 +1399,16 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         }
 
         fn fetchRemotePricing(
-            arena: std.mem.Allocator,
+            shared_allocator: std.mem.Allocator,
             allocator: std.mem.Allocator,
             pricing: *Model.PricingMap,
         ) !void {
-            var io_threaded = std.Io.Threaded.init(allocator);
-            defer io_threaded.deinit();
+            var io_single = std.Io.Threaded.init_single_threaded;
+            defer io_single.deinit();
 
             var client = std.http.Client{
                 .allocator = allocator,
-                .io = io_threaded.io(),
+                .io = io_single.io(),
             };
             defer client.deinit();
 
@@ -1436,30 +1429,30 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             defer json_reader.deinit();
 
             var parser = PricingFeedParser{
-                .arena = arena,
-                .allocator = allocator,
+                .allocator = shared_allocator,
+                .scratch_allocator = allocator,
                 .pricing = pricing,
             };
             try parser.parse(&json_reader);
         }
 
-        fn ensureFallbackPricing(arena: std.mem.Allocator, pricing: *Model.PricingMap) !void {
+        fn ensureFallbackPricing(shared_allocator: std.mem.Allocator, pricing: *Model.PricingMap) !void {
             for (FALLBACK_PRICING) |fallback| {
                 if (pricing.get(fallback.name) != null) continue;
-                const key = try arena.dupe(u8, fallback.name);
+                const key = try shared_allocator.dupe(u8, fallback.name);
                 try pricing.put(key, fallback.pricing);
             }
         }
 
         const PricingFeedParser = struct {
-            arena: std.mem.Allocator,
             allocator: std.mem.Allocator,
+            scratch_allocator: std.mem.Allocator,
             pricing: *Model.PricingMap,
 
             pub fn parse(self: *PricingFeedParser, reader: *std.json.Reader) !void {
-                var key_buffer = std.array_list.Managed(u8).init(self.allocator);
+                var key_buffer = std.array_list.Managed(u8).init(self.scratch_allocator);
                 defer key_buffer.deinit();
-                var scratch = std.array_list.Managed(u8).init(self.allocator);
+                var scratch = std.array_list.Managed(u8).init(self.scratch_allocator);
                 defer scratch.deinit();
 
                 if ((try reader.next()) != .object_begin) return error.InvalidResponse;
@@ -1475,7 +1468,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         },
                         .string => {
                             const name_slice = try readStringValue(reader, &key_buffer);
-                            const copied_name = try self.arena.dupe(u8, name_slice);
+                            const copied_name = try self.allocator.dupe(u8, name_slice);
                             const maybe_pricing = try self.parseEntry(reader, &scratch);
                             if (maybe_pricing) |entry| {
                                 if (self.pricing.get(copied_name) == null) {
@@ -1623,7 +1616,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const allocator = std.testing.allocator;
             var arena_state = std.heap.ArenaAllocator.init(allocator);
             defer arena_state.deinit();
-            const arena = arena_state.allocator();
+            const worker_allocator = arena_state.allocator();
 
             const CodexProvider = Provider(.{
                 .name = "codex-test",
@@ -1633,11 +1626,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             });
 
             var events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
-            defer events.deinit(allocator);
+            defer events.deinit(worker_allocator);
 
             try CodexProvider.parseCodexSessionFile(
-                allocator,
-                arena,
+                worker_allocator,
                 "codex-fixture",
                 "fixtures/codex/basic.jsonl",
                 null,
@@ -1658,7 +1650,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const allocator = std.testing.allocator;
             var arena_state = std.heap.ArenaAllocator.init(allocator);
             defer arena_state.deinit();
-            const arena = arena_state.allocator();
+            const worker_allocator = arena_state.allocator();
 
             const GeminiProvider = Provider(.{
                 .name = "gemini-test",
@@ -1669,11 +1661,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             });
 
             var events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
-            defer events.deinit(allocator);
+            defer events.deinit(worker_allocator);
 
             try GeminiProvider.parseGeminiSessionFile(
-                allocator,
-                arena,
+                worker_allocator,
                 "gemini-fixture",
                 "fixtures/gemini/basic.json",
                 null,
@@ -1695,7 +1686,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const allocator = std.testing.allocator;
             var arena_state = std.heap.ArenaAllocator.init(allocator);
             defer arena_state.deinit();
-            const arena = arena_state.allocator();
+            const worker_allocator = arena_state.allocator();
 
             const ClaudeProvider = Provider(.{
                 .name = "claude-test",
@@ -1704,11 +1695,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             });
 
             var events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
-            defer events.deinit(allocator);
+            defer events.deinit(worker_allocator);
 
             try ClaudeProvider.parseClaudeSessionFile(
-                allocator,
-                arena,
+                worker_allocator,
                 "claude-fixture",
                 "fixtures/claude/basic.jsonl",
                 null,

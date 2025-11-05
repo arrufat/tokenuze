@@ -264,7 +264,6 @@ pub const SummaryBuilder = struct {
     pub fn ingest(
         self: *SummaryBuilder,
         allocator: std.mem.Allocator,
-        arena: std.mem.Allocator,
         event: *const TokenUsageEvent,
         filters: DateFilters,
     ) !void {
@@ -274,16 +273,16 @@ pub const SummaryBuilder = struct {
         self.event_count += 1;
 
         if (self.date_index.get(iso_slice)) |idx| {
-            try updateSummary(&self.summaries.items[idx], allocator, arena, event);
+            try updateSummary(&self.summaries.items[idx], allocator, event);
             return;
         }
 
-        const iso_copy = try arena.dupe(u8, iso_slice);
-        const display = try formatDisplayDate(arena, iso_copy);
+        const iso_copy = try allocator.dupe(u8, iso_slice);
+        const display = try formatDisplayDate(allocator, iso_copy);
         try self.summaries.append(allocator, DailySummary.init(allocator, iso_copy, display));
         const summary_idx = self.summaries.items.len - 1;
         try self.date_index.put(self.summaries.items[summary_idx].iso_date, summary_idx);
-        try updateSummary(&self.summaries.items[summary_idx], allocator, arena, event);
+        try updateSummary(&self.summaries.items[summary_idx], allocator, event);
     }
 
     pub fn items(self: *SummaryBuilder) []DailySummary {
@@ -360,7 +359,6 @@ fn withinFilters(filters: DateFilters, iso: []const u8) bool {
 fn updateSummary(
     summary: *DailySummary,
     allocator: std.mem.Allocator,
-    arena: std.mem.Allocator,
     event: *const TokenUsageEvent,
 ) !void {
     summary.usage.add(event.usage);
@@ -372,7 +370,7 @@ fn updateSummary(
         return;
     }
 
-    const stored_name = try arena.dupe(u8, event.model);
+    const stored_name = try allocator.dupe(u8, event.model);
     try summary.models.append(allocator, .{
         .name = stored_name,
         .is_fallback = event.is_fallback,
@@ -419,7 +417,7 @@ fn appendUniqueString(
     try list.append(allocator, value);
 }
 
-fn formatDisplayDate(arena: std.mem.Allocator, iso_date: []const u8) ![]u8 {
+fn formatDisplayDate(allocator: std.mem.Allocator, iso_date: []const u8) ![]u8 {
     if (iso_date.len < 10) return error.InvalidDate;
 
     const year = try std.fmt.parseInt(u16, iso_date[0..4], 10);
@@ -432,5 +430,5 @@ fn formatDisplayDate(arena: std.mem.Allocator, iso_date: []const u8) ![]u8 {
     };
     if (month == 0 or month > months.len) return error.InvalidDate;
 
-    return std.fmt.allocPrint(arena, "{s} {d:0>2}, {d}", .{ months[month - 1], day, year });
+    return std.fmt.allocPrint(allocator, "{s} {d:0>2}, {d}", .{ months[month - 1], day, year });
 }
