@@ -24,3 +24,6 @@ const Provider = SessionProvider.Provider(.{
 });
 
 pub const collect = Provider.collect;
+pub const streamEvents = Provider.streamEvents;
+pub const loadPricingData = Provider.loadPricingData;
+pub const EventConsumer = Provider.EventConsumer;

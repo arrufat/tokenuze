@@ -24,6 +24,7 @@ zig build run -- --since 20250101  # faster benchmarking runs
 - `--pretty` enables indented JSON output (handy when reading the payload manually).
 - `--agent <codex|gemini|claude>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers).
 - `--machine-id` prints the cached/generated machine identifier and exits (no summaries).
+- `--upload` mirrors `session-end-codex.sh`: it builds the Codex dashboard payload using Tokenuze's own parser (only Codex is supported) and POSTs it to `/api/usage/report` using `DASHBOARD_API_URL`/`DASHBOARD_API_KEY`.
 
 ## What It Produces
 Tokenuze prints a JSON payload shaped like:

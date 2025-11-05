@@ -14,6 +14,7 @@ const CliOptions = struct {
     show_help: bool = false,
     show_version: bool = false,
     providers: tokenuze.ProviderSelection = tokenuze.ProviderSelection.initAll(),
+    upload: bool = false,
 };
 
 var debug_allocator = std.heap.DebugAllocator(.{}){};
@@ -51,6 +52,10 @@ pub fn main() !void {
         try printMachineId(allocator);
         return;
     }
+    if (options.upload) {
+        try tokenuze.uploader.run(allocator, options.filters);
+        return;
+    }
     try tokenuze.run(allocator, options.filters, options.providers);
 }
 
@@ -85,6 +90,11 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
         }
 
         if (machine_id_only) continue;
+
+        if (std.mem.eql(u8, arg, "--upload")) {
+            options.upload = true;
+            continue;
+        }
 
         if (std.mem.eql(u8, arg, "--since")) {
             const value = args.next() orelse return cliError("missing value for --since", .{});
@@ -142,6 +152,15 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
         }
     }
 
+    if (options.upload) {
+        const codex_index = tokenuze.findProviderIndex("codex") orelse {
+            return cliError("--upload requires the codex provider to be available", .{});
+        };
+        if (!options.providers.includesIndex(codex_index)) {
+            return cliError("--upload requires --agent codex (and may include others)", .{});
+        }
+    }
+
     return options;
 }
 
@@ -181,6 +200,7 @@ fn printHelp() !void {
         .{ .label = "--until YYYYMMDD", .desc = "Only include events on/before the date" },
         .{ .label = "--pretty", .desc = "Expand JSON output for readability" },
         .{ .label = "--agent <name>", .desc = agent_desc },
+        .{ .label = "--upload", .desc = "Upload Codex usage via DASHBOARD_API_* envs (Codex only)" },
         .{ .label = "--machine-id", .desc = "Print the stable machine id and exit" },
         .{ .label = "--version", .desc = "Print the Tokenuze version and exit" },
         .{ .label = "-h, --help", .desc = "Show this message and exit" },

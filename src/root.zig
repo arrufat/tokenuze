@@ -5,6 +5,7 @@ const codex = @import("providers/codex.zig");
 const gemini = @import("providers/gemini.zig");
 const render = @import("render.zig");
 pub const machine_id = @import("machine_id.zig");
+pub const uploader = @import("upload.zig");
 
 pub const std_options = .{
     .log_level = .info,

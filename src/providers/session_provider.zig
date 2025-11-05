@@ -34,6 +34,12 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
     const CACHED_OVERLAP = cfg.cached_counts_overlap_input;
 
     return struct {
+        pub const EventConsumer = struct {
+            context: *anyopaque,
+            mutex: ?*std.Thread.Mutex = null,
+            ingest: *const fn (*anyopaque, std.mem.Allocator, *Model.TokenUsageEvent, Model.DateFilters) anyerror!void,
+        };
+
         const LEGACY_FALLBACK_MODEL = legacy_fallback_model;
         const JSON_EXT = cfg.session_file_ext;
         const FALLBACK_PRICING = fallback_pricing;
@@ -86,6 +92,20 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         const ParserError = ParseError || ScannerAllocError || ScannerSkipError || ScannerNextError || ScannerPeekError;
 
+        const SummaryConsumer = struct {
+            builder: *Model.SummaryBuilder,
+        };
+
+        fn summaryIngest(
+            ctx_ptr: *anyopaque,
+            allocator: std.mem.Allocator,
+            event: *Model.TokenUsageEvent,
+            filters: Model.DateFilters,
+        ) anyerror!void {
+            const ctx = @as(*SummaryConsumer, @ptrCast(@alignCast(ctx_ptr)));
+            try ctx.builder.ingest(allocator, event, filters);
+        }
+
         pub fn collect(
             shared_allocator: std.mem.Allocator,
             temp_allocator: std.mem.Allocator,
@@ -104,7 +124,14 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
             var events_timer = try std.time.Timer.start();
             const before_events = summaries.eventCount();
-            try collectEvents(shared_allocator, temp_allocator, summaries, filters, events_progress);
+            var builder_mutex = std.Thread.Mutex{};
+            var summary_ctx = SummaryConsumer{ .builder = summaries };
+            const consumer = EventConsumer{
+                .context = @ptrCast(&summary_ctx),
+                .mutex = &builder_mutex,
+                .ingest = summaryIngest,
+            };
+            try collectEvents(shared_allocator, temp_allocator, filters, consumer, events_progress);
             const after_events = summaries.eventCount();
             if (events_progress) |node| std.Progress.Node.end(node);
             std.log.info(
@@ -132,6 +159,23 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             );
         }
 
+        pub fn streamEvents(
+            shared_allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
+            filters: Model.DateFilters,
+            consumer: EventConsumer,
+        ) !void {
+            try collectEvents(shared_allocator, temp_allocator, filters, consumer, null);
+        }
+
+        pub fn loadPricingData(
+            shared_allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
+            pricing: *Model.PricingMap,
+        ) !void {
+            try loadPricing(shared_allocator, temp_allocator, pricing);
+        }
+
         fn logSessionWarning(file_path: []const u8, message: []const u8, err: anyerror) void {
             std.log.warn(
                 "{s}: {s} '{s}' ({s})",
@@ -142,25 +186,30 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         fn collectEvents(
             shared_allocator: std.mem.Allocator,
             temp_allocator: std.mem.Allocator,
-            summaries: *Model.SummaryBuilder,
             filters: Model.DateFilters,
+            consumer: EventConsumer,
             progress: ?std.Progress.Node,
         ) !void {
             const SharedContext = struct {
                 shared_allocator: std.mem.Allocator,
                 temp_allocator: std.mem.Allocator,
-                summaries: *Model.SummaryBuilder,
-                builder_mutex: *std.Thread.Mutex,
                 filters: Model.DateFilters,
                 progress: ?std.Progress.Node,
                 files_scanned: *std.atomic.Value(usize),
                 files_inflight: *std.atomic.Value(usize),
                 deduper: ?*MessageDeduper,
+                consumer: EventConsumer,
+            };
+
+            const ProcessArgs = struct {
+                absolute_path: []u8,
+                relative_path: []u8,
             };
 
             const ProcessFn = struct {
-                fn run(shared: *SharedContext, path: []u8) void {
-                    defer shared.temp_allocator.free(path);
+                fn run(shared: *SharedContext, args: ProcessArgs) void {
+                    defer shared.temp_allocator.free(args.absolute_path);
+                    defer shared.temp_allocator.free(args.relative_path);
                     defer _ = shared.files_inflight.fetchSub(1, .acq_rel);
                     defer _ = shared.files_scanned.fetchAdd(1, .acq_rel);
                     defer if (shared.progress) |node| std.Progress.Node.completeOne(node);
@@ -171,25 +220,25 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     var local_events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
                     defer local_events.deinit(worker_allocator);
 
-                    const basename = std.fs.path.basename(path);
-                    if (basename.len <= JSON_EXT.len or !std.mem.endsWith(u8, basename, JSON_EXT)) return;
-                    const session_id_slice = basename[0 .. basename.len - JSON_EXT.len];
+                    const relative = args.relative_path;
+                    if (relative.len <= JSON_EXT.len or !std.mem.endsWith(u8, relative, JSON_EXT)) return;
+                    const session_id_slice = relative[0 .. relative.len - JSON_EXT.len];
 
                     const maybe_session_id = duplicateNonEmpty(worker_allocator, session_id_slice) catch {
                         return;
                     };
                     const session_id = maybe_session_id orelse return;
 
-                    parseSessionFile(worker_allocator, session_id, path, shared.deduper, &local_events) catch {
+                    parseSessionFile(worker_allocator, session_id, args.absolute_path, shared.deduper, &local_events) catch {
                         return;
                     };
 
                     if (local_events.items.len == 0) return;
 
-                    shared.builder_mutex.lock();
-                    defer shared.builder_mutex.unlock();
+                    if (shared.consumer.mutex) |mutex| mutex.lock();
+                    defer if (shared.consumer.mutex) |mutex| mutex.unlock();
                     for (local_events.items) |*event| {
-                        shared.summaries.ingest(shared.shared_allocator, event, shared.filters) catch {
+                        shared.consumer.ingest(shared.consumer.context, shared.shared_allocator, event, shared.filters) catch {
                             return;
                         };
                     }
@@ -216,8 +265,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             var walker = try root_dir.walk(shared_allocator);
             defer walker.deinit();
 
-            var builder_mutex = std.Thread.Mutex{};
-
             var files_scanned = std.atomic.Value(usize).init(0);
             var files_inflight = std.atomic.Value(usize).init(0);
             var deduper_storage: ?MessageDeduper = null;
@@ -228,13 +275,12 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             var shared = SharedContext{
                 .shared_allocator = shared_allocator,
                 .temp_allocator = temp_allocator,
-                .summaries = summaries,
-                .builder_mutex = &builder_mutex,
                 .filters = filters,
                 .progress = progress,
                 .files_scanned = &files_scanned,
                 .files_inflight = &files_inflight,
                 .deduper = if (deduper_storage) |*ded| ded else null,
+                .consumer = consumer,
             };
 
             var threaded = std.Io.Threaded.init(temp_allocator);
@@ -248,9 +294,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 const relative_path = std.mem.sliceTo(entry.path, 0);
                 if (!std.mem.endsWith(u8, relative_path, JSON_EXT)) continue;
 
+                const relative_copy = try temp_allocator.dupe(u8, relative_path);
                 const absolute_path = try std.fs.path.join(temp_allocator, &.{ sessions_dir, relative_path });
                 _ = shared.files_inflight.fetchAdd(1, .acq_rel);
-                group.async(io, ProcessFn.run, .{ &shared, absolute_path });
+                group.async(io, ProcessFn.run, .{ &shared, .{
+                    .absolute_path = absolute_path,
+                    .relative_path = relative_copy,
+                } });
 
                 if (progress) |node| {
                     const completed = shared.files_scanned.load(.acquire);

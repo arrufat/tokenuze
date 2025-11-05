@@ -274,7 +274,7 @@ pub const SummaryBuilder = struct {
         filters: DateFilters,
     ) !void {
         const iso_slice = event.local_iso_date[0..];
-        if (!withinFilters(filters, iso_slice)) return;
+        if (!dateWithinFilters(filters, iso_slice)) return;
 
         self.event_count += 1;
 
@@ -353,7 +353,7 @@ pub fn collectMissingModels(
     }
 }
 
-fn withinFilters(filters: DateFilters, iso: []const u8) bool {
+pub fn dateWithinFilters(filters: DateFilters, iso: []const u8) bool {
     if (filters.since) |since_value| {
         if (std.mem.lessThan(u8, iso, since_value[0..])) return false;
     }
@@ -427,7 +427,7 @@ fn appendUniqueString(
     try list.append(allocator, value);
 }
 
-fn formatDisplayDate(allocator: std.mem.Allocator, iso_date: []const u8) ![]u8 {
+pub fn formatDisplayDate(allocator: std.mem.Allocator, iso_date: []const u8) ![]u8 {
     if (iso_date.len < 10) return error.InvalidDate;
 
     const year = try std.fmt.parseInt(u16, iso_date[0..4], 10);
