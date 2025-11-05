@@ -1652,6 +1652,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             try std.testing.expectEqual(@as(u64, 1000), event.usage.input_tokens);
             try std.testing.expectEqual(@as(u64, 200), event.usage.cached_input_tokens);
             try std.testing.expectEqual(@as(u64, 50), event.usage.output_tokens);
+            try std.testing.expectEqual(@as(u64, 1200), event.display_input_tokens);
         }
 
         test "gemini parser converts message totals into usage deltas" {
@@ -1665,7 +1666,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .sessions_dir_suffix = "/unused",
                 .session_file_ext = ".json",
                 .strategy = .gemini,
-                .cached_counts_overlap_input = true,
+                .cached_counts_overlap_input = false,
             });
 
             var events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
@@ -1684,10 +1685,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             try std.testing.expectEqualStrings("gem-session", event.session_id);
             try std.testing.expectEqualStrings("gemini-1.5-pro", event.model);
             try std.testing.expect(!event.is_fallback);
-            try std.testing.expectEqual(@as(u64, 3500), event.usage.input_tokens);
+            try std.testing.expectEqual(@as(u64, 4000), event.usage.input_tokens);
             try std.testing.expectEqual(@as(u64, 500), event.usage.cached_input_tokens);
             try std.testing.expectEqual(@as(u64, 125), event.usage.output_tokens);
             try std.testing.expectEqual(@as(u64, 20), event.usage.reasoning_output_tokens);
+            try std.testing.expectEqual(@as(u64, 4000), event.display_input_tokens);
         }
 
         test "claude parser emits assistant usage events and respects overrides" {
@@ -1722,6 +1724,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             try std.testing.expectEqual(@as(u64, 100), event.usage.cache_creation_input_tokens);
             try std.testing.expectEqual(@as(u64, 250), event.usage.cached_input_tokens);
             try std.testing.expectEqual(@as(u64, 600), event.usage.output_tokens);
+            try std.testing.expectEqual(@as(u64, 1500), event.display_input_tokens);
         }
     };
 }
