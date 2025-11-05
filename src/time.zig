@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const c = @cImport({
     @cInclude("time.h");
@@ -99,7 +100,12 @@ fn utcSecondsToLocalIsoDate(utc_seconds: i64) TimestampError![10]u8 {
 
     var t_value: TimeT = casted;
     var tm_value: c.tm = undefined;
-    if (c.localtime_r(&t_value, &tm_value) == null) return error.OutOfRange;
+    if (builtin.target.os.tag == .windows) {
+        const local_ptr = c.localtime(&t_value) orelse return error.OutOfRange;
+        tm_value = local_ptr.*;
+    } else {
+        if (c.localtime_r(&t_value, &tm_value) == null) return error.OutOfRange;
+    }
 
     const year = @as(i64, tm_value.tm_year) + 1900;
     const month = tm_value.tm_mon + 1;

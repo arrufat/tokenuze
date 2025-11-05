@@ -4,6 +4,7 @@ const tokenuze = @import("tokenuze");
 
 const CliError = error{
     InvalidUsage,
+    OutOfMemory,
 };
 
 const CliOptions = struct {
@@ -30,8 +31,11 @@ pub fn main() !void {
 
     const allocator = choice.allocator;
 
-    const options = parseOptions(allocator) catch {
-        std.process.exit(1);
+    const options = parseOptions(allocator) catch |err| switch (err) {
+        CliError.InvalidUsage => {
+            std.process.exit(1);
+        },
+        else => return err,
     };
     if (options.show_help) {
         try printHelp();

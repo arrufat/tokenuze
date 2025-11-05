@@ -1,0 +1,45 @@
+name: build
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/build.yml"
+      - "**.zig"
+      - "**.zon"
+  pull_request:
+    paths:
+      - ".github/workflows/build.yml"
+      - "**.zig"
+      - "**.zon"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        zig-version: [master]
+        platform: [linux, macos, windows]
+        include:
+          - platform: linux
+            target: x86_64-linux-musl
+          - platform: macos
+            target: aarch64-macos
+          - platform: windows
+            target: x86_64-windows-gnu
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Grab Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ matrix.zig-version }}
+
+      - name: Build ${{ matrix.platform }}
+        run: zig build -Dtarget=${{ matrix.target }}
