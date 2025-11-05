@@ -20,6 +20,7 @@ pub const ProviderConfig = struct {
     fallback_pricing: []const FallbackPricingEntry = &.{},
     session_file_ext: []const u8 = ".jsonl",
     strategy: ParseStrategy = .codex,
+    cached_counts_overlap_input: bool = false,
 };
 
 var remote_pricing_loaded = std.atomic.Value(bool).init(false);
@@ -30,6 +31,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
     const legacy_fallback_model = cfg.legacy_fallback_model;
     const fallback_pricing = cfg.fallback_pricing;
     const STRATEGY = cfg.strategy;
+    const CACHED_OVERLAP = cfg.cached_counts_overlap_input;
 
     return struct {
         const LEGACY_FALLBACK_MODEL = legacy_fallback_model;
@@ -38,6 +40,26 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         const RawUsage = Model.RawTokenUsage;
         const TokenString = Model.TokenBuffer;
+        const MessageDeduper = struct {
+            mutex: std.Thread.Mutex = .{},
+            map: std.AutoHashMap(u64, void),
+
+            fn init(allocator: std.mem.Allocator) !MessageDeduper {
+                return .{ .map = std.AutoHashMap(u64, void).init(allocator) };
+            }
+
+            fn deinit(self: *MessageDeduper) void {
+                self.map.deinit();
+            }
+
+            fn mark(self: *MessageDeduper, key: u64) !bool {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                const gop = try self.map.getOrPut(key);
+                if (gop.found_existing) return false;
+                return true;
+            }
+        };
 
         const PayloadResult = struct {
             payload_type: ?Model.TokenBuffer = null,
@@ -133,6 +155,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 progress: ?std.Progress.Node,
                 files_scanned: *std.atomic.Value(usize),
                 files_inflight: *std.atomic.Value(usize),
+                deduper: ?*MessageDeduper,
             };
 
             const ProcessFn = struct {
@@ -153,7 +176,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     };
                     const session_id = maybe_session_id orelse return;
 
-                    parseSessionFile(shared.allocator, shared.arena, session_id, path, &local_events) catch {
+                    parseSessionFile(shared.allocator, shared.arena, session_id, path, shared.deduper, &local_events) catch {
                         return;
                     };
 
@@ -194,6 +217,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             var thread_safe_arena = std.heap.ThreadSafeAllocator{ .child_allocator = arena };
             var files_scanned = std.atomic.Value(usize).init(0);
             var files_inflight = std.atomic.Value(usize).init(0);
+            var deduper_storage: ?MessageDeduper = null;
+            defer if (deduper_storage) |*ded| ded.deinit();
+            if (STRATEGY == .claude) {
+                deduper_storage = try MessageDeduper.init(allocator);
+            }
             var shared = SharedContext{
                 .allocator = allocator,
                 .arena = thread_safe_arena.allocator(),
@@ -203,6 +231,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .progress = progress,
                 .files_scanned = &files_scanned,
                 .files_inflight = &files_inflight,
+                .deduper = if (deduper_storage) |*ded| ded else null,
             };
 
             var threaded = std.Io.Threaded.init(allocator);
@@ -252,12 +281,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
+            deduper: ?*MessageDeduper,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             switch (STRATEGY) {
-                .codex => try parseCodexSessionFile(allocator, arena, session_id, file_path, events),
-                .gemini => try parseGeminiSessionFile(allocator, arena, session_id, file_path, events),
-                .claude => try parseClaudeSessionFile(allocator, arena, session_id, file_path, events),
+                .codex => try parseCodexSessionFile(allocator, arena, session_id, file_path, deduper, events),
+                .gemini => try parseGeminiSessionFile(allocator, arena, session_id, file_path, deduper, events),
+                .claude => try parseClaudeSessionFile(allocator, arena, session_id, file_path, deduper, events),
             }
         }
 
@@ -266,8 +296,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
+            deduper: ?*MessageDeduper,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
+            _ = deduper;
             var previous_totals: ?RawUsage = null;
             var current_model: ?[]const u8 = null;
             var current_model_is_fallback = false;
@@ -344,8 +376,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
+            deduper: ?*MessageDeduper,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
+            _ = deduper;
             const max_session_size: usize = 32 * 1024 * 1024;
             const file_data = std.fs.cwd().readFileAlloc(file_path, allocator, std.Io.Limit.limited(max_session_size)) catch |err| {
                 logSessionWarning(file_path, "failed to read gemini session file", err);
@@ -420,7 +454,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         }
 
                         const current_raw = parseGeminiUsage(tokens_obj);
-                        const delta = Model.TokenUsage.deltaFrom(current_raw, previous_totals);
+                        var delta = Model.TokenUsage.deltaFrom(current_raw, previous_totals);
+                        normalizeUsageDelta(&delta);
                         previous_totals = current_raw;
 
                         if (delta.input_tokens == 0 and delta.cached_input_tokens == 0 and delta.output_tokens == 0 and delta.reasoning_output_tokens == 0) {
@@ -483,6 +518,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             arena: std.mem.Allocator,
             session_id: []const u8,
             file_path: []const u8,
+            deduper: ?*MessageDeduper,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             const max_session_size: usize = 128 * 1024 * 1024;
@@ -509,8 +545,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             var current_model_is_fallback = false;
             var streamed_total: usize = 0;
             var line_index: usize = 0;
-            var seen_messages = std.AutoHashMap(u64, void).init(allocator);
-            defer seen_messages.deinit();
 
             while (true) {
                 partial_line.clearRetainingCapacity();
@@ -548,7 +582,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         trimmed,
                         line_index,
                         file_path,
-                        &seen_messages,
+                        deduper,
                         &session_label,
                         &session_label_overridden,
                         events,
@@ -569,7 +603,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             line: []const u8,
             line_index: usize,
             file_path: []const u8,
-            seen_messages: *std.AutoHashMap(u64, void),
+            deduper: ?*MessageDeduper,
             session_label: *[]const u8,
             session_label_overridden: *bool,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
@@ -609,7 +643,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 allocator,
                 arena,
                 record,
-                seen_messages,
+                deduper,
                 session_label.*,
                 events,
                 current_model,
@@ -621,7 +655,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             allocator: std.mem.Allocator,
             arena: std.mem.Allocator,
             record: std.json.ObjectMap,
-            seen_messages: *std.AutoHashMap(u64, void),
+            deduper: ?*MessageDeduper,
             session_label: []const u8,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
             current_model: *?[]const u8,
@@ -640,7 +674,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 else => return,
             };
 
-            if (!try shouldEmitClaudeMessage(session_label, seen_messages, message_obj)) {
+            if (!try shouldEmitClaudeMessage(deduper, record, message_obj)) {
                 return;
             }
 
@@ -716,19 +750,24 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         }
 
         fn shouldEmitClaudeMessage(
-            session_label: []const u8,
-            seen_messages: *std.AutoHashMap(u64, void),
+            deduper: ?*MessageDeduper,
+            record: std.json.ObjectMap,
             message_obj: std.json.ObjectMap,
         ) !bool {
+            const dedupe = deduper orelse return true;
             const id_value = message_obj.get("id") orelse return true;
             const id_slice = switch (id_value) {
                 .string => |slice| slice,
                 else => return true,
             };
-            const session_hash = std.hash.Wyhash.hash(0, session_label);
-            const msg_hash = std.hash.Wyhash.hash(session_hash, id_slice);
-            const gop = try seen_messages.getOrPut(msg_hash);
-            return !gop.found_existing;
+            const request_value = record.get("requestId") orelse return true;
+            const request_slice = switch (request_value) {
+                .string => |slice| slice,
+                else => return true,
+            };
+            var hash = std.hash.Wyhash.hash(0, id_slice);
+            hash = std.hash.Wyhash.hash(hash, request_slice);
+            return try dedupe.mark(hash);
         }
 
         fn parseClaudeUsage(usage_obj: std.json.ObjectMap) RawUsage {
@@ -749,6 +788,16 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .reasoning_output_tokens = 0,
                 .total_tokens = total_tokens,
             };
+        }
+
+        fn normalizeUsageDelta(delta: *Model.TokenUsage) void {
+            if (!CACHED_OVERLAP) return;
+            const overlap = if (delta.cached_input_tokens > delta.input_tokens)
+                delta.input_tokens
+            else
+                delta.cached_input_tokens;
+            delta.input_tokens -= overlap;
+            delta.cached_input_tokens = overlap;
         }
 
         fn parseObjectField(
@@ -1191,7 +1240,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             if (delta_usage == null) return;
 
-            const delta = delta_usage.?;
+            var delta = delta_usage.?;
+            normalizeUsageDelta(&delta);
             if (delta.input_tokens == 0 and delta.cached_input_tokens == 0 and delta.output_tokens == 0 and delta.reasoning_output_tokens == 0) {
                 return;
             }

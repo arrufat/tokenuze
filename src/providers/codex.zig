@@ -20,6 +20,7 @@ const Provider = SessionProvider.Provider(.{
     .sessions_dir_suffix = "/.codex/sessions",
     .legacy_fallback_model = "gpt-5",
     .fallback_pricing = fallback_pricing[0..],
+    .cached_counts_overlap_input = true,
 });
 
 pub const collect = Provider.collect;

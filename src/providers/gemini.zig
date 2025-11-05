@@ -22,6 +22,7 @@ const Provider = SessionProvider.Provider(.{
     .fallback_pricing = fallback_pricing[0..],
     .session_file_ext = ".json",
     .strategy = .gemini,
+    .cached_counts_overlap_input = true,
 });
 
 pub const collect = Provider.collect;
