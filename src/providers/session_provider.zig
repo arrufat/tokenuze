@@ -88,7 +88,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         pub fn collect(
             shared_allocator: std.mem.Allocator,
-            thread_allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
             summaries: *Model.SummaryBuilder,
             filters: Model.DateFilters,
             pricing: *Model.PricingMap,
@@ -104,7 +104,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
             var events_timer = try std.time.Timer.start();
             const before_events = summaries.eventCount();
-            try collectEvents(shared_allocator, thread_allocator, summaries, filters, events_progress);
+            try collectEvents(shared_allocator, temp_allocator, summaries, filters, events_progress);
             const after_events = summaries.eventCount();
             if (events_progress) |node| std.Progress.Node.end(node);
             std.log.info(
@@ -118,7 +118,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
             var pricing_timer = try std.time.Timer.start();
             const before_pricing = pricing.count();
-            try loadPricing(shared_allocator, thread_allocator, pricing);
+            try loadPricing(shared_allocator, temp_allocator, pricing);
             const after_pricing = pricing.count();
             if (pricing_progress) |node| std.Progress.Node.end(node);
             std.log.info(
@@ -141,14 +141,14 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn collectEvents(
             shared_allocator: std.mem.Allocator,
-            thread_allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
             summaries: *Model.SummaryBuilder,
             filters: Model.DateFilters,
             progress: ?std.Progress.Node,
         ) !void {
             const SharedContext = struct {
                 shared_allocator: std.mem.Allocator,
-                thread_allocator: std.mem.Allocator,
+                temp_allocator: std.mem.Allocator,
                 summaries: *Model.SummaryBuilder,
                 builder_mutex: *std.Thread.Mutex,
                 filters: Model.DateFilters,
@@ -160,11 +160,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             const ProcessFn = struct {
                 fn run(shared: *SharedContext, path: []u8) void {
-                    defer shared.thread_allocator.free(path);
+                    defer shared.temp_allocator.free(path);
                     defer _ = shared.files_inflight.fetchSub(1, .acq_rel);
                     defer _ = shared.files_scanned.fetchAdd(1, .acq_rel);
                     defer if (shared.progress) |node| std.Progress.Node.completeOne(node);
-                    var worker_arena_state = std.heap.ArenaAllocator.init(shared.thread_allocator);
+                    var worker_arena_state = std.heap.ArenaAllocator.init(shared.temp_allocator);
                     defer worker_arena_state.deinit();
                     const worker_allocator = worker_arena_state.allocator();
 
@@ -223,11 +223,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             var deduper_storage: ?MessageDeduper = null;
             defer if (deduper_storage) |*ded| ded.deinit();
             if (STRATEGY == .claude) {
-                deduper_storage = try MessageDeduper.init(thread_allocator);
+                deduper_storage = try MessageDeduper.init(temp_allocator);
             }
             var shared = SharedContext{
                 .shared_allocator = shared_allocator,
-                .thread_allocator = thread_allocator,
+                .temp_allocator = temp_allocator,
                 .summaries = summaries,
                 .builder_mutex = &builder_mutex,
                 .filters = filters,
@@ -237,7 +237,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .deduper = if (deduper_storage) |*ded| ded else null,
             };
 
-            var threaded = std.Io.Threaded.init(thread_allocator);
+            var threaded = std.Io.Threaded.init(temp_allocator);
             defer threaded.deinit();
 
             const io = threaded.io();
@@ -248,7 +248,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 const relative_path = std.mem.sliceTo(entry.path, 0);
                 if (!std.mem.endsWith(u8, relative_path, JSON_EXT)) continue;
 
-                const absolute_path = try std.fs.path.join(thread_allocator, &.{ sessions_dir, relative_path });
+                const absolute_path = try std.fs.path.join(temp_allocator, &.{ sessions_dir, relative_path });
                 _ = shared.files_inflight.fetchAdd(1, .acq_rel);
                 group.async(io, ProcessFn.run, .{ &shared, absolute_path });
 
@@ -1349,7 +1349,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn loadPricing(
             shared_allocator: std.mem.Allocator,
-            thread_allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
             pricing: *Model.PricingMap,
         ) !void {
             var total_timer = try std.time.Timer.start();
@@ -1361,7 +1361,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 fetch_attempted = true;
                 var fetch_timer = try std.time.Timer.start();
                 const before_fetch = pricing.count();
-                fetchRemotePricing(shared_allocator, thread_allocator, pricing) catch |err| {
+                fetchRemotePricing(shared_allocator, temp_allocator, pricing) catch |err| {
                     fetch_ok = false;
                     fetch_error = err;
                 };
@@ -1400,14 +1400,14 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn fetchRemotePricing(
             shared_allocator: std.mem.Allocator,
-            allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
             pricing: *Model.PricingMap,
         ) !void {
             var io_single = std.Io.Threaded.init_single_threaded;
             defer io_single.deinit();
 
             var client = std.http.Client{
-                .allocator = allocator,
+                .allocator = temp_allocator,
                 .io = io_single.io(),
             };
             defer client.deinit();
@@ -1425,12 +1425,12 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             var transfer_buffer: [4096]u8 = undefined;
             const body_reader = response.reader(&transfer_buffer);
 
-            var json_reader = std.json.Reader.init(allocator, body_reader);
+            var json_reader = std.json.Reader.init(temp_allocator, body_reader);
             defer json_reader.deinit();
 
             var parser = PricingFeedParser{
                 .allocator = shared_allocator,
-                .scratch_allocator = allocator,
+                .temp_allocator = temp_allocator,
                 .pricing = pricing,
             };
             try parser.parse(&json_reader);
@@ -1446,13 +1446,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         const PricingFeedParser = struct {
             allocator: std.mem.Allocator,
-            scratch_allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
             pricing: *Model.PricingMap,
 
             pub fn parse(self: *PricingFeedParser, reader: *std.json.Reader) !void {
-                var key_buffer = std.array_list.Managed(u8).init(self.scratch_allocator);
+                var key_buffer = std.array_list.Managed(u8).init(self.temp_allocator);
                 defer key_buffer.deinit();
-                var scratch = std.array_list.Managed(u8).init(self.scratch_allocator);
+                var scratch = std.array_list.Managed(u8).init(self.temp_allocator);
                 defer scratch.deinit();
 
                 if ((try reader.next()) != .object_begin) return error.InvalidResponse;

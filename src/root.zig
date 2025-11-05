@@ -128,14 +128,14 @@ pub fn run(allocator: std.mem.Allocator, filters: DateFilters, selection: Provid
     defer summary_builder.deinit(allocator);
 
     var thread_safe_allocator = std.heap.ThreadSafeAllocator{ .child_allocator = std.heap.page_allocator };
-    const concurrent_allocator = thread_safe_allocator.allocator();
+    const temp_allocator = thread_safe_allocator.allocator();
 
     for (providers, 0..) |provider, idx| {
         if (!selection.includesIndex(idx)) continue;
         const before_events = summary_builder.eventCount();
         const before_pricing = pricing_map.count();
         var collect_phase = try PhaseTracker.start(progress_parent, provider.phase_label, 0);
-        try provider.collect(allocator, concurrent_allocator, &summary_builder, filters, &pricing_map, collect_phase.progress());
+        try provider.collect(allocator, temp_allocator, &summary_builder, filters, &pricing_map, collect_phase.progress());
         const elapsed = collect_phase.elapsedMs();
         collect_phase.finish();
         std.log.info(
