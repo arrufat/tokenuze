@@ -100,6 +100,8 @@ pub const Renderer = struct {
     fn writeUsageFields(jw: anytype, usage: Model.TokenUsage) !void {
         try jw.objectField("input_tokens");
         try jw.write(usage.input_tokens);
+        try jw.objectField("cache_creation_input_tokens");
+        try jw.write(usage.cache_creation_input_tokens);
         try jw.objectField("cached_input_tokens");
         try jw.write(usage.cached_input_tokens);
         try jw.objectField("output_tokens");

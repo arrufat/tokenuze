@@ -1,5 +1,6 @@
 const std = @import("std");
 const Model = @import("model.zig");
+const claude = @import("providers/claude.zig");
 const codex = @import("providers/codex.zig");
 const gemini = @import("providers/gemini.zig");
 const render = @import("render.zig");
@@ -32,6 +33,7 @@ pub const ProviderSpec = struct {
 };
 
 pub const providers = [_]ProviderSpec{
+    .{ .name = "claude", .phase_label = "collect_claude", .collect = claude.collect },
     .{ .name = "codex", .phase_label = "collect_codex", .collect = codex.collect },
     .{ .name = "gemini", .phase_label = "collect_gemini", .collect = gemini.collect },
 };

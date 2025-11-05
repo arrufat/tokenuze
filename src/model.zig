@@ -36,6 +36,7 @@ pub fn parseFilterDate(input: []const u8) ParseDateError![10]u8 {
 
 pub const TokenUsage = struct {
     input_tokens: u64 = 0,
+    cache_creation_input_tokens: u64 = 0,
     cached_input_tokens: u64 = 0,
     output_tokens: u64 = 0,
     reasoning_output_tokens: u64 = 0,
@@ -43,6 +44,7 @@ pub const TokenUsage = struct {
 
     pub fn add(self: *TokenUsage, other: TokenUsage) void {
         self.input_tokens += other.input_tokens;
+        self.cache_creation_input_tokens += other.cache_creation_input_tokens;
         self.cached_input_tokens += other.cached_input_tokens;
         self.output_tokens += other.output_tokens;
         self.reasoning_output_tokens += other.reasoning_output_tokens;
@@ -50,29 +52,29 @@ pub const TokenUsage = struct {
     }
 
     pub fn cost(self: TokenUsage, pricing: ModelPricing) f64 {
-        const non_cached = if (self.input_tokens > self.cached_input_tokens)
-            self.input_tokens - self.cached_input_tokens
-        else
-            0;
-        const cached = if (self.cached_input_tokens > self.input_tokens)
-            self.input_tokens
-        else
-            self.cached_input_tokens;
+        const overlap = if (self.input_tokens >= self.cached_input_tokens) self.cached_input_tokens else 0;
+        const non_cached = self.input_tokens - overlap;
+        const cached = self.cached_input_tokens;
 
+        const cache_creation_cost = (@as(f64, @floatFromInt(self.cache_creation_input_tokens)) / MILLION) * pricing.cache_creation_cost_per_m;
         const input_cost = (@as(f64, @floatFromInt(non_cached)) / MILLION) * pricing.input_cost_per_m;
         const cached_cost = (@as(f64, @floatFromInt(cached)) / MILLION) * pricing.cached_input_cost_per_m;
         const output_cost = (@as(f64, @floatFromInt(self.output_tokens)) / MILLION) * pricing.output_cost_per_m;
 
-        return input_cost + cached_cost + output_cost;
+        return cache_creation_cost + input_cost + cached_cost + output_cost;
     }
 
     pub fn fromRaw(raw: RawTokenUsage) TokenUsage {
         return .{
             .input_tokens = raw.input_tokens,
-            .cached_input_tokens = clampCached(raw.input_tokens, raw.cached_input_tokens),
+            .cache_creation_input_tokens = raw.cache_creation_input_tokens,
+            .cached_input_tokens = raw.cached_input_tokens,
             .output_tokens = raw.output_tokens,
             .reasoning_output_tokens = raw.reasoning_output_tokens,
-            .total_tokens = if (raw.total_tokens > 0) raw.total_tokens else raw.input_tokens + raw.output_tokens,
+            .total_tokens = if (raw.total_tokens > 0)
+                raw.total_tokens
+            else
+                raw.input_tokens + raw.cache_creation_input_tokens + raw.cached_input_tokens + raw.output_tokens,
         };
     }
 
@@ -84,6 +86,7 @@ pub const TokenUsage = struct {
 
 pub const RawTokenUsage = struct {
     input_tokens: u64 = 0,
+    cache_creation_input_tokens: u64 = 0,
     cached_input_tokens: u64 = 0,
     output_tokens: u64 = 0,
     reasoning_output_tokens: u64 = 0,
@@ -108,6 +111,7 @@ pub const UsageAccumulator = struct {
     pub fn applyField(self: *UsageAccumulator, field: UsageField, value: u64) void {
         switch (field) {
             .input_tokens => self.raw.input_tokens = value,
+            .cache_creation_input_tokens => self.raw.cache_creation_input_tokens = value,
             .cached_input_tokens => self.cached_direct = value,
             .cache_read_input_tokens => self.cached_fallback = value,
             .output_tokens => self.raw.output_tokens = value,
@@ -132,6 +136,7 @@ pub const UsageAccumulator = struct {
 
 pub const UsageField = enum {
     input_tokens,
+    cache_creation_input_tokens,
     cached_input_tokens,
     cache_read_input_tokens,
     output_tokens,
@@ -141,6 +146,7 @@ pub const UsageField = enum {
 
 const usage_field_map = std.StaticStringMap(UsageField).initComptime(.{
     .{ "input_tokens", .input_tokens },
+    .{ "cache_creation_input_tokens", .cache_creation_input_tokens },
     .{ "cached_input_tokens", .cached_input_tokens },
     .{ "cache_read_input_tokens", .cache_read_input_tokens },
     .{ "output_tokens", .output_tokens },
@@ -175,6 +181,7 @@ pub const TokenUsageEvent = struct {
 
 pub const ModelPricing = struct {
     input_cost_per_m: f64,
+    cache_creation_cost_per_m: f64,
     cached_input_cost_per_m: f64,
     output_cost_per_m: f64,
 };
@@ -386,6 +393,10 @@ fn rawUsageDelta(current: RawTokenUsage, previous_opt: ?RawTokenUsage) RawTokenU
     const previous = previous_opt orelse RawTokenUsage{};
     return .{
         .input_tokens = subtractPositive(current.input_tokens, previous.input_tokens),
+        .cache_creation_input_tokens = subtractPositive(
+            current.cache_creation_input_tokens,
+            previous.cache_creation_input_tokens,
+        ),
         .cached_input_tokens = subtractPositive(current.cached_input_tokens, previous.cached_input_tokens),
         .output_tokens = subtractPositive(current.output_tokens, previous.output_tokens),
         .reasoning_output_tokens = subtractPositive(current.reasoning_output_tokens, previous.reasoning_output_tokens),
@@ -395,10 +406,6 @@ fn rawUsageDelta(current: RawTokenUsage, previous_opt: ?RawTokenUsage) RawTokenU
 
 fn subtractPositive(current: u64, previous: u64) u64 {
     return if (current > previous) current - previous else 0;
-}
-
-fn clampCached(input_tokens: u64, cached_tokens: u64) u64 {
-    return if (cached_tokens > input_tokens) input_tokens else cached_tokens;
 }
 
 fn appendUniqueString(
