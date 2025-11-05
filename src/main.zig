@@ -27,18 +27,16 @@ pub fn main() !void {
         _ = debug_allocator.deinit();
     };
 
-    var arena_state = std.heap.ArenaAllocator.init(choice.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const allocator = choice.allocator;
 
-    const options = parseOptions(arena) catch {
+    const options = parseOptions(allocator) catch {
         std.process.exit(1);
     };
     if (options.machine_id) {
-        try printMachineId(arena);
+        try printMachineId(allocator);
         return;
     }
-    try tokenuze.run(arena, options.filters, options.providers);
+    try tokenuze.run(allocator, options.filters, options.providers);
 }
 
 fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
