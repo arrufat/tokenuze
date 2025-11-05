@@ -1,0 +1,2 @@
+{"timestamp":"2025-09-25T14:25:27.897Z","type":"turn_context","payload":{"model":"gpt-5-codex"}}
+{"timestamp":"2025-09-25T14:26:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":1450}}}}

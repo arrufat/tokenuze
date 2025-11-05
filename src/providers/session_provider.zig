@@ -1618,5 +1618,112 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         fn nsToMs(ns: u64) f64 {
             return @as(f64, @floatFromInt(ns)) / @as(f64, @floatFromInt(std.time.ns_per_ms));
         }
+
+        test "codex parser emits usage events from token_count entries" {
+            const allocator = std.testing.allocator;
+            var arena_state = std.heap.ArenaAllocator.init(allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            const CodexProvider = Provider(.{
+                .name = "codex-test",
+                .sessions_dir_suffix = "/unused",
+                .legacy_fallback_model = "gpt-5",
+                .cached_counts_overlap_input = true,
+            });
+
+            var events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
+            defer events.deinit(allocator);
+
+            try CodexProvider.parseCodexSessionFile(
+                allocator,
+                arena,
+                "codex-fixture",
+                "fixtures/codex/basic.jsonl",
+                null,
+                &events,
+            );
+
+            try std.testing.expectEqual(@as(usize, 1), events.items.len);
+            const event = events.items[0];
+            try std.testing.expectEqualStrings("codex-fixture", event.session_id);
+            try std.testing.expectEqualStrings("gpt-5-codex", event.model);
+            try std.testing.expect(!event.is_fallback);
+            try std.testing.expectEqual(@as(u64, 1000), event.usage.input_tokens);
+            try std.testing.expectEqual(@as(u64, 200), event.usage.cached_input_tokens);
+            try std.testing.expectEqual(@as(u64, 50), event.usage.output_tokens);
+        }
+
+        test "gemini parser converts message totals into usage deltas" {
+            const allocator = std.testing.allocator;
+            var arena_state = std.heap.ArenaAllocator.init(allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            const GeminiProvider = Provider(.{
+                .name = "gemini-test",
+                .sessions_dir_suffix = "/unused",
+                .session_file_ext = ".json",
+                .strategy = .gemini,
+                .cached_counts_overlap_input = true,
+            });
+
+            var events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
+            defer events.deinit(allocator);
+
+            try GeminiProvider.parseGeminiSessionFile(
+                allocator,
+                arena,
+                "gemini-fixture",
+                "fixtures/gemini/basic.json",
+                null,
+                &events,
+            );
+
+            try std.testing.expectEqual(@as(usize, 1), events.items.len);
+            const event = events.items[0];
+            try std.testing.expectEqualStrings("gem-session", event.session_id);
+            try std.testing.expectEqualStrings("gemini-1.5-pro", event.model);
+            try std.testing.expect(!event.is_fallback);
+            try std.testing.expectEqual(@as(u64, 3500), event.usage.input_tokens);
+            try std.testing.expectEqual(@as(u64, 500), event.usage.cached_input_tokens);
+            try std.testing.expectEqual(@as(u64, 125), event.usage.output_tokens);
+            try std.testing.expectEqual(@as(u64, 20), event.usage.reasoning_output_tokens);
+        }
+
+        test "claude parser emits assistant usage events and respects overrides" {
+            const allocator = std.testing.allocator;
+            var arena_state = std.heap.ArenaAllocator.init(allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            const ClaudeProvider = Provider(.{
+                .name = "claude-test",
+                .sessions_dir_suffix = "/unused",
+                .strategy = .claude,
+            });
+
+            var events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
+            defer events.deinit(allocator);
+
+            try ClaudeProvider.parseClaudeSessionFile(
+                allocator,
+                arena,
+                "claude-fixture",
+                "fixtures/claude/basic.jsonl",
+                null,
+                &events,
+            );
+
+            try std.testing.expectEqual(@as(usize, 1), events.items.len);
+            const event = events.items[0];
+            try std.testing.expectEqualStrings("claude-session", event.session_id);
+            try std.testing.expectEqualStrings("claude-3-5-sonnet", event.model);
+            try std.testing.expect(!event.is_fallback);
+            try std.testing.expectEqual(@as(u64, 1500), event.usage.input_tokens);
+            try std.testing.expectEqual(@as(u64, 100), event.usage.cache_creation_input_tokens);
+            try std.testing.expectEqual(@as(u64, 250), event.usage.cached_input_tokens);
+            try std.testing.expectEqual(@as(u64, 600), event.usage.output_tokens);
+        }
     };
 }

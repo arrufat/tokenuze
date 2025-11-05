@@ -1,0 +1,18 @@
+{
+  "sessionId": "gem-session",
+  "messages": [
+    {
+      "id": "msg-1",
+      "timestamp": "2025-10-26T15:09:39.226Z",
+      "model": "gemini-1.5-pro",
+      "tokens": {
+        "input": 4000,
+        "cached": 500,
+        "output": 120,
+        "tool": 5,
+        "thoughts": 20,
+        "total": 4645
+      }
+    }
+  ]
+}

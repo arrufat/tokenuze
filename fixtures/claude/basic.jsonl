@@ -1,0 +1,1 @@
+{"sessionId":"claude-session","type":"assistant","timestamp":"2025-10-28T09:31:23.624Z","requestId":"req_fixture","message":{"id":"msg_fixture","model":"claude-3-5-sonnet","usage":{"input_tokens":1500,"cache_creation_input_tokens":100,"cache_read_input_tokens":250,"output_tokens":600}}}
