@@ -21,7 +21,7 @@ zig build --release=fast run -- --since 20250101  # faster benchmarking runs
 - `--since YYYYMMDD` limits processing to events on/after the specified local date.
 - `--until YYYYMMDD` caps the range; must be >= `--since` when both are present.
 - `--pretty` enables indented JSON output (handy when reading the payload manually).
-- `--model <codex|gemini|claude>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers).
+- `--agent <codex|gemini|claude>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers).
 - `--machine-id` prints the cached/generated machine identifier and exits (no summaries).
 
 ## What It Produces
