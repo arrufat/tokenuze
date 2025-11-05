@@ -13,7 +13,7 @@ pub fn run(allocator: std.mem.Allocator, payload: []const u8) !void {
 
     std.log.info("Uploading summary to {s}...", .{endpoint});
     var response = sendPayload(allocator, endpoint, env.api_key, @constCast(payload)) catch |err| {
-        std.debug.print("⚠️  Connection failed. Is the server running at {s}?\n", .{env.api_url});
+        std.debug.print("Connection failed. Is the server running at {s}?\n", .{env.api_url});
         return err;
     };
     defer response.deinit(allocator);
@@ -53,7 +53,7 @@ const EnvConfig = struct {
 };
 
 fn reportMissingApiKey() noreturn {
-    std.debug.print("❌ Error: DASHBOARD_API_KEY not set\n", .{});
+    std.debug.print("Error: DASHBOARD_API_KEY not set\n", .{});
     std.debug.print("   Please add to ~/.zshrc or ~/.bashrc:\n", .{});
     std.debug.print("   export DASHBOARD_API_KEY=\"sk_team_your_api_key_here\"\n", .{});
     std.debug.print("   (optionally set DASHBOARD_API_URL for non-default endpoints)\n", .{});
@@ -124,23 +124,23 @@ fn handleResponse(response: HttpResponse) void {
     const body_trimmed = std.mem.trim(u8, response.body, " \n\r\t");
     switch (response.status) {
         .ok => {
-            std.debug.print("✅ Usage reported successfully\n", .{});
+            std.debug.print("Usage reported successfully\n", .{});
             if (body_trimmed.len > 0) std.debug.print("   Response: {s}\n", .{body_trimmed});
         },
         .unauthorized => {
-            std.debug.print("❌ Authentication failed: Invalid or inactive API key\n", .{});
+            std.debug.print("Authentication failed: Invalid or inactive API key\n", .{});
         },
         .unprocessable_entity => {
-            std.debug.print("❌ Data validation error.\n", .{});
+            std.debug.print("Data validation error.\n", .{});
             if (body_trimmed.len > 0) std.debug.print("   Error: {s}\n", .{body_trimmed});
         },
         .internal_server_error => {
-            std.debug.print("⚠️  Server error. Please try again later.\n", .{});
+            std.debug.print("Server error. Please try again later.\n", .{});
             if (body_trimmed.len > 0) std.debug.print("   Error: {s}\n", .{body_trimmed});
         },
         else => {
             std.debug.print(
-                "⚠️  Failed to report usage (HTTP {d})\n",
+                "Failed to report usage (HTTP {d})\n",
                 .{@intFromEnum(response.status)},
             );
             if (body_trimmed.len > 0) std.debug.print("   Response: {s}\n", .{body_trimmed});
