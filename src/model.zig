@@ -353,16 +353,7 @@ pub const SessionRecorder = struct {
 
     fn writeUsageObject(jw: anytype, usage: TokenUsage, cost: f64) !void {
         try jw.beginObject();
-        try jw.objectField("inputTokens");
-        try jw.write(usage.input_tokens);
-        try jw.objectField("cachedInputTokens");
-        try jw.write(usage.cached_input_tokens);
-        try jw.objectField("outputTokens");
-        try jw.write(usage.output_tokens);
-        try jw.objectField("reasoningOutputTokens");
-        try jw.write(usage.reasoning_output_tokens);
-        try jw.objectField("totalTokens");
-        try jw.write(usage.total_tokens);
+        try writeUsageFields(jw, usage);
         try jw.objectField("costUSD");
         try jw.write(cost);
         try jw.endObject();
@@ -488,16 +479,7 @@ pub const SessionRecorder = struct {
             try jw.write(self.session_file);
             try jw.objectField("directory");
             try jw.write(self.directory);
-            try jw.objectField("inputTokens");
-            try jw.write(self.usage.input_tokens);
-            try jw.objectField("cachedInputTokens");
-            try jw.write(self.usage.cached_input_tokens);
-            try jw.objectField("outputTokens");
-            try jw.write(self.usage.output_tokens);
-            try jw.objectField("reasoningOutputTokens");
-            try jw.write(self.usage.reasoning_output_tokens);
-            try jw.objectField("totalTokens");
-            try jw.write(self.usage.total_tokens);
+            try writeUsageFields(jw, self.usage);
             try jw.objectField("costUSD");
             try jw.write(self.cost_usd);
             try jw.objectField("models");
@@ -505,16 +487,7 @@ pub const SessionRecorder = struct {
             for (self.models.items) |model| {
                 try jw.objectField(model.name);
                 try jw.beginObject();
-                try jw.objectField("inputTokens");
-                try jw.write(model.usage.input_tokens);
-                try jw.objectField("cachedInputTokens");
-                try jw.write(model.usage.cached_input_tokens);
-                try jw.objectField("outputTokens");
-                try jw.write(model.usage.output_tokens);
-                try jw.objectField("reasoningOutputTokens");
-                try jw.write(model.usage.reasoning_output_tokens);
-                try jw.objectField("totalTokens");
-                try jw.write(model.usage.total_tokens);
+                try writeUsageFields(jw, model.usage);
                 try jw.objectField("isFallback");
                 try jw.write(model.is_fallback);
                 try jw.endObject();
@@ -534,6 +507,19 @@ pub const SessionRecorder = struct {
 
     fn sessionModelLessThan(_: void, lhs: SessionModel, rhs: SessionModel) bool {
         return std.mem.lessThan(u8, lhs.name, rhs.name);
+    }
+
+    fn writeUsageFields(jw: anytype, usage: TokenUsage) !void {
+        try jw.objectField("inputTokens");
+        try jw.write(usage.input_tokens);
+        try jw.objectField("cachedInputTokens");
+        try jw.write(usage.cached_input_tokens);
+        try jw.objectField("outputTokens");
+        try jw.write(usage.output_tokens);
+        try jw.objectField("reasoningOutputTokens");
+        try jw.write(usage.reasoning_output_tokens);
+        try jw.objectField("totalTokens");
+        try jw.write(usage.total_tokens);
     }
 };
 
