@@ -53,9 +53,24 @@ pub fn main() !void {
         return;
     }
     if (options.upload) {
-        const summary_payload = try tokenuze.renderSummaryAlloc(allocator, options.filters, options.providers);
-        defer allocator.free(summary_payload);
-        try tokenuze.uploader.run(allocator, summary_payload);
+        var uploads = std.ArrayList(tokenuze.uploader.ProviderUpload).empty;
+        defer uploads.deinit(allocator);
+
+        for (tokenuze.providers, 0..) |provider, idx| {
+            if (!options.providers.includesIndex(idx)) continue;
+            var single = tokenuze.ProviderSelection.initEmpty();
+            single.includeIndex(idx);
+            const daily = try tokenuze.renderSummaryAlloc(allocator, options.filters, single);
+            try uploads.append(allocator, .{ .name = provider.name, .daily_summary = daily });
+        }
+
+        if (uploads.items.len == 0) {
+            std.log.err("No providers selected for upload; use --agent to pick at least one provider.", .{});
+            return;
+        }
+
+        defer for (uploads.items) |entry| allocator.free(entry.daily_summary);
+        try tokenuze.uploader.run(allocator, uploads.items);
         return;
     }
     try tokenuze.run(allocator, options.filters, options.providers);

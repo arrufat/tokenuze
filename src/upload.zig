@@ -1,11 +1,16 @@
 const std = @import("std");
 const machine_id = @import("machine_id.zig");
 
+pub const ProviderUpload = struct {
+    name: []const u8,
+    daily_summary: []const u8,
+};
+
 const DEFAULT_API_URL = "http://localhost:8000";
 const empty_sessions_json = "{\"sessions\":[],\"totals\":{}}";
 const empty_weekly_json = "{\"weekly\":[]}";
 
-pub fn run(allocator: std.mem.Allocator, daily_summary: []const u8) !void {
+pub fn run(allocator: std.mem.Allocator, providers: []const ProviderUpload) !void {
     var env = try EnvConfig.load(allocator);
     defer env.deinit(allocator);
 
@@ -18,7 +23,9 @@ pub fn run(allocator: std.mem.Allocator, daily_summary: []const u8) !void {
     const machine_slice = machine[0..];
     std.log.info("Machine ID: {s}", .{machine_slice});
 
-    const payload = try buildCodexPayload(allocator, machine_slice, daily_summary);
+    if (providers.len == 0) return error.NoProvidersSelected;
+
+    const payload = try buildUploadPayload(allocator, machine_slice, providers);
     defer allocator.free(payload);
 
     std.log.info("Uploading summary to {s}...", .{endpoint});
@@ -237,12 +244,11 @@ fn buildEndpoint(allocator: std.mem.Allocator, base: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "{s}/api/usage/report", .{trimmed});
 }
 
-fn buildCodexPayload(
+fn buildUploadPayload(
     allocator: std.mem.Allocator,
     machine: []const u8,
-    daily_summary: []const u8,
+    providers: []const ProviderUpload,
 ) ![]u8 {
-    const trimmed_daily = std.mem.trim(u8, daily_summary, " \n\r\t");
     const timestamp = try currentTimestampIso8601(allocator);
     defer allocator.free(timestamp);
 
@@ -260,11 +266,7 @@ fn buildCodexPayload(
         .machineId = machine,
         .hostname = hostname,
         .displayName = display_name,
-        .codex = .{
-            .sessions = .{ .text = empty_sessions_json },
-            .daily = .{ .text = trimmed_daily },
-            .weekly = .{ .text = empty_weekly_json },
-        },
+        .providers = providers,
     };
 
     var buffer = std.ArrayList(u8).empty;
@@ -313,13 +315,34 @@ const Payload = struct {
     machineId: []const u8,
     hostname: []const u8,
     displayName: []const u8,
-    codex: ProviderBlock,
-};
+    providers: []const ProviderUpload,
 
-const ProviderBlock = struct {
-    sessions: RawJson,
-    daily: RawJson,
-    weekly: RawJson,
+    pub fn jsonStringify(self: Payload, jw: anytype) !void {
+        try jw.beginObject();
+        try jw.objectField("timestamp");
+        try jw.write(self.timestamp);
+        try jw.objectField("machineId");
+        try jw.write(self.machineId);
+        try jw.objectField("hostname");
+        try jw.write(self.hostname);
+        try jw.objectField("displayName");
+        try jw.write(self.displayName);
+
+        for (self.providers) |provider| {
+            try jw.objectField(provider.name);
+            try jw.beginObject();
+            try jw.objectField("sessions");
+            try jw.write(RawJson{ .text = empty_sessions_json });
+            try jw.objectField("daily");
+            const trimmed_daily = std.mem.trim(u8, provider.daily_summary, " \n\r\t");
+            try jw.write(RawJson{ .text = trimmed_daily });
+            try jw.objectField("weekly");
+            try jw.write(RawJson{ .text = empty_weekly_json });
+            try jw.endObject();
+        }
+
+        try jw.endObject();
+    }
 };
 
 const RawJson = struct {
