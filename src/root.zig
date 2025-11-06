@@ -276,7 +276,7 @@ fn collectSummary(
     const totals_elapsed = blk: {
         var totals_phase = try PhaseTracker.start(progress_parent, "totals", 0);
         defer totals_phase.finish();
-        Model.accumulateTotals(allocator, summaries, &totals);
+        Model.accumulateTotals(summaries, &totals);
         try Model.collectMissingModels(allocator, &missing_set, &totals.missing_pricing);
         break :blk totals_phase.elapsedMs();
     };

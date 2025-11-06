@@ -255,6 +255,9 @@ pub const SummaryTotals = struct {
     }
 
     pub fn deinit(self: *SummaryTotals, allocator: std.mem.Allocator) void {
+        for (self.missing_pricing.items) |name| {
+            allocator.free(name);
+        }
         self.missing_pricing.deinit(allocator);
     }
 };
@@ -341,7 +344,6 @@ pub fn applyPricing(
 }
 
 pub fn accumulateTotals(
-    allocator: std.mem.Allocator,
     summaries: []const DailySummary,
     totals: *SummaryTotals,
 ) void {
@@ -349,9 +351,6 @@ pub fn accumulateTotals(
         totals.usage.add(summary.usage);
         totals.display_input_tokens += summary.display_input_tokens;
         totals.cost_usd += summary.cost_usd;
-        for (summary.missing_pricing.items) |name| {
-            appendUniqueString(allocator, &totals.missing_pricing, name) catch {};
-        }
     }
 }
 
@@ -362,7 +361,9 @@ pub fn collectMissingModels(
 ) !void {
     var iterator = missing_set.iterator();
     while (iterator.next()) |entry| {
-        try appendUniqueString(allocator, output, entry.key_ptr.*);
+        const owned_name = try allocator.dupe(u8, entry.key_ptr.*);
+        errdefer allocator.free(owned_name);
+        try output.append(allocator, owned_name);
     }
 }
 
