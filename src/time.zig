@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const windows = std.os.windows;
 
 const c = @cImport({
     @cInclude("time.h");
@@ -17,6 +18,58 @@ const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 pub fn localIsoDateFromTimestamp(timestamp: []const u8) TimestampError![10]u8 {
     const utc_seconds = try parseIso8601ToUtcSeconds(timestamp);
     return utcSecondsToLocalIsoDate(utc_seconds);
+}
+
+pub fn currentTimestampIso8601(allocator: std.mem.Allocator) ![]u8 {
+    const secs = try currentUnixSeconds();
+    const epoch = std.time.epoch.EpochSeconds{ .secs = secs };
+    const epoch_day = epoch.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch.getDaySeconds();
+    return std.fmt.allocPrint(
+        allocator,
+        "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z",
+        .{
+            year_day.year,
+            month_day.month.numeric(),
+            @as(u8, month_day.day_index) + 1,
+            day_seconds.getHoursIntoDay(),
+            day_seconds.getMinutesIntoHour(),
+            day_seconds.getSecondsIntoMinute(),
+        },
+    );
+}
+
+pub fn currentUnixSeconds() !u64 {
+    return switch (builtin.target.os.tag) {
+        .windows => windowsUnixSeconds(),
+        else => posixUnixSeconds(),
+    };
+}
+
+pub const TimezoneError = error{TimezoneUnavailable};
+
+pub fn detectLocalTimezoneLabel(allocator: std.mem.Allocator) ![]u8 {
+    const offset = detectLocalTimezoneOffsetMinutes() catch return allocator.dupe(u8, "UTC+00:00");
+    return formatTimezoneLabel(allocator, offset);
+}
+
+pub fn detectLocalTimezoneOffsetMinutes() !i32 {
+    return switch (builtin.target.os.tag) {
+        .windows => detectWindowsTimezoneMinutes(),
+        .wasi => 0,
+        else => detectPosixTimezoneMinutes(),
+    };
+}
+
+pub fn formatTimezoneLabel(allocator: std.mem.Allocator, offset_minutes: i32) ![]u8 {
+    const clamped = std.math.clamp(offset_minutes, -12 * 60, 14 * 60);
+    const sign: u8 = if (clamped >= 0) '+' else '-';
+    const abs_minutes = @abs(clamped);
+    const hours = abs_minutes / 60;
+    const mins = abs_minutes % 60;
+    return std.fmt.allocPrint(allocator, "UTC{c}{d:0>2}:{d:0>2}", .{ sign, hours, mins });
 }
 
 fn parseIso8601ToUtcSeconds(timestamp: []const u8) TimestampError!i64 {
@@ -155,4 +208,72 @@ fn writeTwoDigits(value: u8, dest: []u8) void {
 
 fn toDigit(value: anytype) u8 {
     return @as(u8, @intCast(value)) + '0';
+}
+
+fn posixUnixSeconds() !u64 {
+    const spec = try std.posix.clock_gettime(std.posix.CLOCK.REALTIME);
+    const raw_secs = if (@hasField(std.posix.timespec, "tv_sec"))
+        @field(spec, "tv_sec")
+    else
+        @field(spec, "sec");
+    return @as(u64, @intCast(raw_secs));
+}
+
+fn windowsUnixSeconds() !u64 {
+    const intervals = @as(u64, @intCast(windows.ntdll.RtlGetSystemTimePrecise()));
+    const WINDOWS_TO_UNIX_100NS = 11_644_473_600 * 10_000_000;
+    return (intervals - WINDOWS_TO_UNIX_100NS) / 10_000_000;
+}
+
+fn detectPosixTimezoneMinutes() !i32 {
+    const now = try currentUnixSeconds();
+    const TimeT = c.time_t;
+    const casted = std.math.cast(TimeT, @as(i64, @intCast(now))) orelse return TimezoneError.TimezoneUnavailable;
+    var t_value: TimeT = casted;
+
+    var local_tm: c.tm = undefined;
+    if (c.localtime_r(&t_value, &local_tm) == null) return TimezoneError.TimezoneUnavailable;
+
+    if (@hasField(c.tm, "tm_gmtoff")) {
+        const off = @as(i64, @intCast(@field(local_tm, "tm_gmtoff")));
+        return @as(i32, @intCast(@divTrunc(off, 60)));
+    }
+    if (@hasField(c.tm, "__tm_gmtoff")) {
+        const off = @as(i64, @intCast(@field(local_tm, "__tm_gmtoff")));
+        return @as(i32, @intCast(@divTrunc(off, 60)));
+    }
+
+    var utc_tm: c.tm = undefined;
+    if (c.gmtime_r(&t_value, &utc_tm) == null) return TimezoneError.TimezoneUnavailable;
+
+    const local_secs = tmToUnixSeconds(local_tm);
+    const utc_secs = tmToUnixSeconds(utc_tm);
+    const delta = local_secs - utc_secs;
+    return @as(i32, @intCast(@divTrunc(delta, 60)));
+}
+
+fn detectWindowsTimezoneMinutes() !i32 {
+    var offset_seconds: windows.LONG = 0;
+    if (@hasDecl(c, "_get_timezone")) {
+        if (c._get_timezone(&offset_seconds) != 0) return TimezoneError.TimezoneUnavailable;
+    } else if (@hasDecl(c, "_timezone")) {
+        offset_seconds = c._timezone;
+    } else {
+        return TimezoneError.TimezoneUnavailable;
+    }
+    return -@as(i32, @intCast(@divTrunc(offset_seconds, 60)));
+}
+
+fn tmToUnixSeconds(tm_value: c.tm) i64 {
+    const year = @as(i32, tm_value.tm_year) + 1900;
+    const month = @as(u8, @intCast(tm_value.tm_mon + 1));
+    const day = @as(u8, @intCast(tm_value.tm_mday));
+    const hour = tm_value.tm_hour;
+    const minute = tm_value.tm_min;
+    const second = tm_value.tm_sec;
+    const day_count = daysFromCivil(year, month, day);
+    return day_count * SECONDS_PER_DAY +
+        @as(i64, hour) * 3600 +
+        @as(i64, minute) * 60 +
+        @as(i64, second);
 }

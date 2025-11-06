@@ -1,6 +1,7 @@
 const std = @import("std");
 const machine_id = @import("machine_id.zig");
 const io_util = @import("io_util.zig");
+const timeutil = @import("time.zig");
 
 pub const ProviderUpload = struct {
     name: []const u8,
@@ -263,7 +264,7 @@ fn buildUploadPayload(
     machine: []const u8,
     providers: []const ProviderUpload,
 ) ![]u8 {
-    const timestamp = try currentTimestampIso8601(allocator);
+    const timestamp = try timeutil.currentTimestampIso8601(allocator);
     defer allocator.free(timestamp);
 
     const hostname = try resolveHostname(allocator);
@@ -275,13 +276,18 @@ fn buildUploadPayload(
     const display_name = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ username, hostname });
     defer allocator.free(display_name);
 
+    const timezone_label = timeutil.detectLocalTimezoneLabel(allocator) catch try allocator.dupe(u8, "UTC+00:00");
+    defer allocator.free(timezone_label);
+
     const payload = Payload{
         .timestamp = timestamp,
         .machineId = machine,
         .hostname = hostname,
         .displayName = display_name,
+        .timezone = timezone_label,
         .providers = providers,
     };
+    std.log.info("Payload timestamp (UTC): {s} | timezone: {s}", .{ timestamp, timezone_label });
 
     var buffer = std.ArrayList(u8).empty;
     defer buffer.deinit(allocator);
@@ -333,6 +339,7 @@ const Payload = struct {
     machineId: []const u8,
     hostname: []const u8,
     displayName: []const u8,
+    timezone: []const u8,
     providers: []const ProviderUpload,
 
     pub fn jsonStringify(self: Payload, jw: anytype) !void {
@@ -345,6 +352,8 @@ const Payload = struct {
         try jw.write(self.hostname);
         try jw.objectField("displayName");
         try jw.write(self.displayName);
+        try jw.objectField("timezone");
+        try jw.write(self.timezone);
 
         for (self.providers) |provider| {
             try jw.objectField(provider.name);
@@ -419,25 +428,21 @@ fn resolveUsername(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(u8, "unknown");
 }
 
-fn currentTimestampIso8601(allocator: std.mem.Allocator) ![]u8 {
-    const secs = currentUnixSeconds() catch return allocator.dupe(u8, "1970-01-01T00:00:00Z");
-    const epoch = std.time.epoch.EpochSeconds{ .secs = secs };
-    const epoch_day = epoch.getEpochDay();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const day_seconds = epoch.getDaySeconds();
-    return std.fmt.allocPrint(
-        allocator,
-        "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z",
-        .{
-            year_day.year,
-            month_day.month.numeric(),
-            @as(u8, month_day.day_index) + 1,
-            day_seconds.getHoursIntoDay(),
-            day_seconds.getMinutesIntoHour(),
-            day_seconds.getSecondsIntoMinute(),
-        },
-    );
+fn daysFromCivil(year: i32, month_u8: u8, day_u8: u8) i64 {
+    const m = @as(i32, month_u8);
+    const d = @as(i32, day_u8);
+    var y = year;
+    var mm = m;
+    if (mm <= 2) {
+        y -= 1;
+        mm += 12;
+    }
+
+    const era = if (y >= 0) @divTrunc(y, 400) else -@divTrunc(-y, 400) - 1;
+    const yoe = y - era * 400;
+    const doy = @divTrunc(153 * (mm - 3) + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divTrunc(yoe, 4) - @divTrunc(yoe, 100) + @divTrunc(yoe, 400) + doy;
+    return @as(i64, era) * 146097 + @as(i64, doe) - 719468;
 }
 
 fn currentUnixSeconds() !u64 {
