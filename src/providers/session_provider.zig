@@ -220,7 +220,12 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     defer local_events.deinit(worker_allocator);
 
                     const relative = shared.paths[args.index];
-                    const absolute_path = std.fs.path.join(worker_allocator, &.{ shared.sessions_dir, relative }) catch {
+                    const absolute_path = std.fs.path.join(worker_allocator, &.{ shared.sessions_dir, relative }) catch |err| {
+                        std.log.warn("{s}.collectEvents: unable to build path for '{s}' ({s})", .{
+                            provider_name,
+                            relative,
+                            @errorName(err),
+                        });
                         return;
                     };
                     defer worker_allocator.free(absolute_path);
