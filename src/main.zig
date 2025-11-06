@@ -161,7 +161,7 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
         if (std.mem.eql(u8, arg, "--tz")) {
             const value = args.next() orelse return cliError("missing value for --tz", .{});
             const offset = tokenuze.parseTimezoneOffsetMinutes(value) catch {
-                return cliError("--tz expects offsets like +09 or -05:30", .{});
+                return cliError("--tz expects an offset like '+09', '-05:30', or 'UTC'", .{});
             };
             options.filters.timezone_offset_minutes = @intCast(offset);
             timezone_specified = true;
