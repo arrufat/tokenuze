@@ -70,10 +70,10 @@ pub fn parseTimezoneOffsetMinutes(input: []const u8) ParseTimezoneError!i32 {
         if (trimmed[idx] == ':') {
             idx += 1;
             if (idx + 2 > trimmed.len) return error.InvalidFormat;
-            minutes = try parseMinutePair(trimmed[idx .. idx + 2]);
+            minutes = std.fmt.parseInt(i32, trimmed[idx .. idx + 2], 10) catch return error.InvalidFormat;
             idx += 2;
         } else if (trimmed.len - idx == 2) {
-            minutes = try parseMinutePair(trimmed[idx..]);
+            minutes = std.fmt.parseInt(i32, trimmed[idx..], 10) catch return error.InvalidFormat;
             idx = trimmed.len;
         } else {
             return error.InvalidFormat;
@@ -87,12 +87,6 @@ pub fn parseTimezoneOffsetMinutes(input: []const u8) ParseTimezoneError!i32 {
     const offset = sign * total_minutes;
     if (offset < -12 * 60 or offset > 14 * 60) return error.OutOfRange;
     return offset;
-}
-
-fn parseMinutePair(slice: []const u8) ParseTimezoneError!i32 {
-    if (slice.len != 2) return error.InvalidFormat;
-    if (!std.ascii.isDigit(slice[0]) or !std.ascii.isDigit(slice[1])) return error.InvalidFormat;
-    return (@as(i32, slice[0]) - '0') * 10 + (@as(i32, slice[1]) - '0');
 }
 
 pub fn currentTimestampIso8601(allocator: std.mem.Allocator) ![]u8 {
