@@ -35,6 +35,7 @@ pub fn parseTimezoneOffsetMinutes(input: []const u8) ParseTimezoneError!i32 {
     if (trimmed.len >= 3 and std.ascii.eqlIgnoreCase(trimmed[0..3], "utc")) {
         idx = 3;
         while (idx < trimmed.len and std.ascii.isWhitespace(trimmed[idx])) : (idx += 1) {}
+        if (idx == trimmed.len) return 0;
     }
 
     if (idx >= trimmed.len) return error.InvalidFormat;
