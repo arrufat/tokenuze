@@ -501,6 +501,10 @@ pub const SessionRecorder = struct {
                 try jw.objectField(model.name);
                 try jw.beginObject();
                 try writeUsageFields(jw, model.usage);
+                try jw.objectField("costUSD");
+                try jw.write(model.cost_usd);
+                try jw.objectField("pricingAvailable");
+                try jw.write(model.pricing_available);
                 try jw.objectField("isFallback");
                 try jw.write(model.is_fallback);
                 try jw.endObject();
