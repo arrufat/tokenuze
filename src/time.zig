@@ -65,9 +65,6 @@ pub fn parseTimezoneOffsetMinutes(input: []const u8) ParseTimezoneError!i32 {
         hours = std.fmt.parseInt(i32, hours_part, 10) catch return error.InvalidFormat;
         minutes = std.fmt.parseInt(i32, minutes_part, 10) catch return error.InvalidFormat;
     } else {
-        for (remaining) |ch| {
-            if (!std.ascii.isDigit(ch)) return error.InvalidFormat;
-        }
         switch (remaining.len) {
             1, 2 => {
                 hours = std.fmt.parseInt(i32, remaining, 10) catch return error.InvalidFormat;
