@@ -152,6 +152,7 @@ fn sendWithFallback(
 ) !HttpResponse {
     return sendOnce(client, uri, extra_headers, payload, null) catch |err| switch (err) {
         error.InvalidDnsCnameRecord => {
+            std.log.warn("Zig DNS resolver failed for {s}; falling back to libc resolver", .{host_name.bytes});
             const connection = try connectWithLibcResolver(allocator, client, uri, protocol, host_name) orelse return err;
             return sendOnce(client, uri, extra_headers, payload, connection);
         },
