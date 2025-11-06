@@ -204,6 +204,10 @@ fn resolveIpv4Address(
     host: []const u8,
     port: u16,
 ) !?[4]u8 {
+    if (@import("builtin").target.os.tag == .windows) {
+        return null;
+    }
+
     const host_c = try std.mem.concatWithSentinel(allocator, u8, &.{host}, 0);
     defer allocator.free(host_c);
 
@@ -423,11 +427,15 @@ fn resolveHostname(allocator: std.mem.Allocator) ![]u8 {
         else => return err,
     }
 
-    var buf: [hostnameBufferLen()]u8 = undefined;
-    const host = std.posix.gethostname(&buf) catch {
+    if (@import("builtin").target.os.tag == .windows) {
         return allocator.dupe(u8, "unknown-host");
-    };
-    return allocator.dupe(u8, host);
+    } else {
+        var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
+        const host = std.posix.gethostname(&buf) catch {
+            return allocator.dupe(u8, "unknown-host");
+        };
+        return allocator.dupe(u8, host);
+    }
 }
 
 fn resolveUsername(allocator: std.mem.Allocator) ![]u8 {
@@ -448,22 +456,9 @@ fn resolveUsername(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(u8, "unknown");
 }
 
-fn hostnameBufferLen() usize {
-    return comptime blk: {
-        if (@TypeOf(std.posix.HOST_NAME_MAX) == void) break :blk 256;
-        break :blk std.posix.HOST_NAME_MAX;
-    };
-}
-
 fn currentTimestampIso8601(allocator: std.mem.Allocator) ![]u8 {
-    const spec = std.posix.clock_gettime(std.posix.CLOCK.REALTIME) catch {
-        return allocator.dupe(u8, "1970-01-01T00:00:00Z");
-    };
-    const raw_secs = if (@hasField(std.posix.timespec, "tv_sec"))
-        @field(spec, "tv_sec")
-    else
-        @field(spec, "sec");
-    const epoch = std.time.epoch.EpochSeconds{ .secs = @as(u64, @intCast(raw_secs)) };
+    const secs = currentUnixSeconds() catch return allocator.dupe(u8, "1970-01-01T00:00:00Z");
+    const epoch = std.time.epoch.EpochSeconds{ .secs = secs };
     const epoch_day = epoch.getEpochDay();
     const year_day = epoch_day.calculateYearDay();
     const month_day = year_day.calculateMonthDay();
@@ -480,4 +475,28 @@ fn currentTimestampIso8601(allocator: std.mem.Allocator) ![]u8 {
             day_seconds.getSecondsIntoMinute(),
         },
     );
+}
+
+fn currentUnixSeconds() !u64 {
+    const os = @import("builtin").target.os.tag;
+    return switch (os) {
+        .windows => windowsUnixSeconds(),
+        else => posixUnixSeconds(),
+    };
+}
+
+fn posixUnixSeconds() !u64 {
+    const spec = try std.posix.clock_gettime(std.posix.CLOCK.REALTIME);
+    const raw_secs = if (@hasField(std.posix.timespec, "tv_sec"))
+        @field(spec, "tv_sec")
+    else
+        @field(spec, "sec");
+    return @as(u64, @intCast(raw_secs));
+}
+
+fn windowsUnixSeconds() !u64 {
+    const win = std.os.windows;
+    const intervals = @as(u64, @intCast(win.ntdll.RtlGetSystemTimePrecise()));
+    const WINDOWS_TO_UNIX_100NS = 11_644_473_600 * 10_000_000;
+    return (intervals - WINDOWS_TO_UNIX_100NS) / 10_000_000;
 }
