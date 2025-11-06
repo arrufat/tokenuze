@@ -22,7 +22,7 @@ tokenuze --help
 ## Command-Line Options
 - `--since YYYYMMDD` limits processing to events on/after the specified local date.
 - `--until YYYYMMDD` caps the range; must be >= `--since` when both are present.
-- `--tz [+/-HH[:MM]]` buckets events using the provided timezone offset (default `UTC+09:00`).
+- `--tz [+/-HH[:MM]]` buckets events using the provided timezone offset (default: system timezone).
 - `--pretty` enables indented JSON output (handy when reading the payload manually).
 - `--agent <codex|gemini|claude>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers).
 - `--machine-id` prints the cached/generated machine identifier and exits (no summaries).
