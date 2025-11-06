@@ -83,7 +83,11 @@ pub fn main() !void {
             allocator.free(entry.sessions_summary);
             allocator.free(entry.weekly_summary);
         };
-        try tokenuze.uploader.run(allocator, uploads.items);
+        try tokenuze.uploader.run(
+            allocator,
+            uploads.items,
+            options.filters.timezone_offset_minutes,
+        );
         return;
     }
     try tokenuze.run(allocator, options.filters, options.providers);
@@ -190,6 +194,10 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
             }
         }
     }
+
+    const detected_offset = tokenuze.detectLocalTimezoneOffsetMinutes() catch 0;
+    const clamped = std.math.clamp(detected_offset, -12 * 60, 14 * 60);
+    options.filters.local_timezone_offset_minutes = @intCast(clamped);
 
     return options;
 }

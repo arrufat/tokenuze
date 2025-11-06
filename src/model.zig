@@ -10,6 +10,7 @@ pub const DateFilters = struct {
     until: ?[10]u8 = null,
     pretty_output: bool = false,
     timezone_offset_minutes: i16 = @intCast(timeutil.DEFAULT_TIMEZONE_OFFSET_MINUTES),
+    local_timezone_offset_minutes: i16 = 0,
 };
 
 pub const ParseDateError = error{

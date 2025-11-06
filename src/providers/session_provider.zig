@@ -217,7 +217,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     defer worker_arena_state.deinit();
                     const worker_allocator = worker_arena_state.allocator();
 
-                    const timezone_offset = @as(i32, shared.filters.timezone_offset_minutes);
+                    const timezone_shift = @as(i32, shared.filters.timezone_offset_minutes) -
+                        @as(i32, shared.filters.local_timezone_offset_minutes);
                     var local_events = std.ArrayListUnmanaged(Model.TokenUsageEvent){};
                     defer local_events.deinit(worker_allocator);
 
@@ -235,7 +236,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         session_id,
                         args.absolute_path,
                         shared.deduper,
-                        timezone_offset,
+                        timezone_shift,
                         &local_events,
                     ) catch {
                         return;
@@ -342,13 +343,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
-            timezone_offset_minutes: i32,
+            timezone_shift_minutes: i32,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             switch (STRATEGY) {
-                .codex => try parseCodexSessionFile(allocator, session_id, file_path, deduper, timezone_offset_minutes, events),
-                .gemini => try parseGeminiSessionFile(allocator, session_id, file_path, deduper, timezone_offset_minutes, events),
-                .claude => try parseClaudeSessionFile(allocator, session_id, file_path, deduper, timezone_offset_minutes, events),
+                .codex => try parseCodexSessionFile(allocator, session_id, file_path, deduper, timezone_shift_minutes, events),
+                .gemini => try parseGeminiSessionFile(allocator, session_id, file_path, deduper, timezone_shift_minutes, events),
+                .claude => try parseClaudeSessionFile(allocator, session_id, file_path, deduper, timezone_shift_minutes, events),
             }
         }
 
@@ -357,7 +358,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
-            timezone_offset_minutes: i32,
+            timezone_shift_minutes: i32,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             _ = deduper;
@@ -423,7 +424,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     &previous_totals,
                     &current_model,
                     &current_model_is_fallback,
-                    timezone_offset_minutes,
+                    timezone_shift_minutes,
                 );
 
                 if (!newline_consumed) break;
@@ -437,7 +438,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
-            timezone_offset_minutes: i32,
+            timezone_shift_minutes: i32,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             _ = deduper;
@@ -498,7 +499,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                             else => continue,
                         };
                         const timestamp_copy = try duplicateNonEmpty(allocator, timestamp_slice) orelse continue;
-                        const iso_date = timeutil.isoDateForTimezone(timestamp_copy, timezone_offset_minutes) catch {
+                        const iso_date = timeutil.isoDateWithShift(timestamp_copy, timezone_shift_minutes) catch {
                             continue;
                         };
 
@@ -580,7 +581,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             session_id: []const u8,
             file_path: []const u8,
             deduper: ?*MessageDeduper,
-            timezone_offset_minutes: i32,
+            timezone_shift_minutes: i32,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
         ) !void {
             const max_session_size: usize = 128 * 1024 * 1024;
@@ -646,7 +647,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         deduper,
                         &session_label,
                         &session_label_overridden,
-                        timezone_offset_minutes,
+                        timezone_shift_minutes,
                         events,
                         &current_model,
                         &current_model_is_fallback,
@@ -667,7 +668,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             deduper: ?*MessageDeduper,
             session_label: *[]const u8,
             session_label_overridden: *bool,
-            timezone_offset_minutes: i32,
+            timezone_shift_minutes: i32,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
             current_model: *?[]const u8,
             current_model_is_fallback: *bool,
@@ -706,7 +707,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 record,
                 deduper,
                 session_label.*,
-                timezone_offset_minutes,
+                timezone_shift_minutes,
                 events,
                 current_model,
                 current_model_is_fallback,
@@ -718,7 +719,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             record: std.json.ObjectMap,
             deduper: ?*MessageDeduper,
             session_label: []const u8,
-            timezone_offset_minutes: i32,
+            timezone_shift_minutes: i32,
             events: *std.ArrayListUnmanaged(Model.TokenUsageEvent),
             current_model: *?[]const u8,
             current_model_is_fallback: *bool,
@@ -753,7 +754,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             };
             const timestamp_copy = duplicateNonEmpty(allocator, timestamp_slice) catch return;
             const owned_timestamp = timestamp_copy orelse return;
-            const iso_date = timeutil.isoDateForTimezone(owned_timestamp, timezone_offset_minutes) catch {
+            const iso_date = timeutil.isoDateWithShift(owned_timestamp, timezone_shift_minutes) catch {
                 return;
             };
 
@@ -1191,7 +1192,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             previous_totals: *?RawUsage,
             current_model: *?[]const u8,
             current_model_is_fallback: *bool,
-            timezone_offset_minutes: i32,
+            timezone_shift_minutes: i32,
         ) !void {
             const trimmed = std.mem.trim(u8, line, " \t\r\n");
             if (trimmed.len == 0) return;
@@ -1292,7 +1293,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 return;
             };
             raw_timestamp.release(allocator);
-            const iso_date = timeutil.isoDateForTimezone(timestamp_copy, timezone_offset_minutes) catch {
+            const iso_date = timeutil.isoDateWithShift(timestamp_copy, timezone_shift_minutes) catch {
                 return;
             };
 
@@ -1724,7 +1725,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 "codex-fixture",
                 "fixtures/codex/basic.jsonl",
                 null,
-                timeutil.DEFAULT_TIMEZONE_OFFSET_MINUTES,
+                0,
                 &events,
             );
 
@@ -1761,7 +1762,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 "gemini-fixture",
                 "fixtures/gemini/basic.json",
                 null,
-                timeutil.DEFAULT_TIMEZONE_OFFSET_MINUTES,
+                0,
                 &events,
             );
 
@@ -1797,7 +1798,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 "claude-fixture",
                 "fixtures/claude/basic.jsonl",
                 null,
-                timeutil.DEFAULT_TIMEZONE_OFFSET_MINUTES,
+                0,
                 &events,
             );
 

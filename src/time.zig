@@ -23,8 +23,14 @@ pub const ParseTimezoneError = error{
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 pub fn isoDateForTimezone(timestamp: []const u8, offset_minutes: i32) TimestampError![10]u8 {
-    const utc_seconds = try parseIso8601ToUtcSeconds(timestamp);
-    return utcSecondsToOffsetIsoDate(utc_seconds, offset_minutes);
+    const parsed = try parseIso8601(timestamp);
+    return utcSecondsToOffsetIsoDate(parsed.utc_seconds, offset_minutes);
+}
+
+pub fn isoDateWithShift(timestamp: []const u8, shift_minutes: i32) TimestampError![10]u8 {
+    const parsed = try parseIso8601(timestamp);
+    const declared_seconds = @as(i64, parsed.declared_offset_minutes) * 60;
+    return utcSecondsToOffsetIsoDate(parsed.utc_seconds + declared_seconds, shift_minutes);
 }
 
 pub fn parseTimezoneOffsetMinutes(input: []const u8) ParseTimezoneError!i32 {
@@ -147,7 +153,12 @@ pub fn formatTimezoneLabel(allocator: std.mem.Allocator, offset_minutes: i32) ![
     return std.fmt.allocPrint(allocator, "UTC{c}{d:0>2}:{d:0>2}", .{ sign, hours, mins });
 }
 
-fn parseIso8601ToUtcSeconds(timestamp: []const u8) TimestampError!i64 {
+const ParsedTimestamp = struct {
+    utc_seconds: i64,
+    declared_offset_minutes: i32,
+};
+
+fn parseIso8601(timestamp: []const u8) TimestampError!ParsedTimestamp {
     const split_index = std.mem.indexOfScalar(u8, timestamp, 'T') orelse return error.InvalidFormat;
     const date_part = timestamp[0..split_index];
     const time_part = timestamp[split_index + 1 ..];
@@ -219,7 +230,11 @@ fn parseIso8601ToUtcSeconds(timestamp: []const u8) TimestampError!i64 {
         @as(i64, minute) * 60 +
         @as(i64, second);
 
-    return seconds - offset_seconds;
+    const offset_minutes = @as(i32, @intCast(@divTrunc(offset_seconds, 60)));
+    return .{
+        .utc_seconds = seconds - offset_seconds,
+        .declared_offset_minutes = offset_minutes,
+    };
 }
 
 fn utcSecondsToOffsetIsoDate(utc_seconds: i64, offset_minutes: i32) TimestampError![10]u8 {

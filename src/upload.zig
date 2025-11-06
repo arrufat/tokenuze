@@ -21,7 +21,11 @@ const UploadError = error{
     UnexpectedResponse,
 };
 
-pub fn run(allocator: std.mem.Allocator, providers: []const ProviderUpload) !void {
+pub fn run(
+    allocator: std.mem.Allocator,
+    providers: []const ProviderUpload,
+    timezone_offset_minutes: i32,
+) !void {
     var env = try EnvConfig.load(allocator);
     defer env.deinit(allocator);
 
@@ -36,7 +40,11 @@ pub fn run(allocator: std.mem.Allocator, providers: []const ProviderUpload) !voi
 
     if (providers.len == 0) return error.NoProvidersSelected;
 
-    const payload = try buildUploadPayload(allocator, machine_slice, providers);
+    const timezone_label = timeutil.formatTimezoneLabel(allocator, timezone_offset_minutes) catch
+        try allocator.dupe(u8, "UTC+00:00");
+    defer allocator.free(timezone_label);
+
+    const payload = try buildUploadPayload(allocator, machine_slice, providers, timezone_label);
     defer allocator.free(payload);
 
     std.log.info("Uploading summary to {s}...", .{endpoint});
@@ -263,6 +271,7 @@ fn buildUploadPayload(
     allocator: std.mem.Allocator,
     machine: []const u8,
     providers: []const ProviderUpload,
+    timezone_label: []const u8,
 ) ![]u8 {
     const timestamp = try timeutil.currentTimestampIso8601(allocator);
     defer allocator.free(timestamp);
@@ -275,9 +284,6 @@ fn buildUploadPayload(
 
     const display_name = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ username, hostname });
     defer allocator.free(display_name);
-
-    const timezone_label = timeutil.detectLocalTimezoneLabel(allocator) catch try allocator.dupe(u8, "UTC+00:00");
-    defer allocator.free(timezone_label);
 
     const payload = Payload{
         .timestamp = timestamp,

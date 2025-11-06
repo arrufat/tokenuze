@@ -21,6 +21,7 @@ pub const DailySummary = Model.DailySummary;
 pub const SummaryTotals = Model.SummaryTotals;
 pub const parseFilterDate = Model.parseFilterDate;
 pub const parseTimezoneOffsetMinutes = timeutil.parseTimezoneOffsetMinutes;
+pub const detectLocalTimezoneOffsetMinutes = timeutil.detectLocalTimezoneOffsetMinutes;
 
 const CollectFn = *const fn (
     std.mem.Allocator,
