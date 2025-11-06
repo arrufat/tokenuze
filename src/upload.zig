@@ -40,9 +40,8 @@ pub fn run(
 
     if (providers.len == 0) return error.NoProvidersSelected;
 
-    const timezone_label = timeutil.formatTimezoneLabelAlloc(allocator, timezone_offset_minutes) catch
-        try allocator.dupe(u8, "UTC+00:00");
-    defer allocator.free(timezone_label);
+    var tz_label_buf: [16]u8 = undefined;
+    const timezone_label = timeutil.formatTimezoneLabel(&tz_label_buf, timezone_offset_minutes);
 
     const payload = try buildUploadPayload(allocator, machine_slice, providers, timezone_label);
     defer allocator.free(payload);
