@@ -287,15 +287,14 @@ pub const SessionRecorder = struct {
     }
 
     pub fn ingest(self: *SessionRecorder, allocator: std.mem.Allocator, event: *const TokenUsageEvent) !void {
-        var gop = try self.sessions.getOrPut(event.session_id);
-        if (!gop.found_existing) {
+        var session = self.sessions.getPtr(event.session_id) orelse blk: {
             const owned_id = try allocator.dupe(u8, event.session_id);
             errdefer allocator.free(owned_id);
             const parts = splitSessionId(owned_id);
-            gop.key_ptr.* = owned_id;
-            gop.value_ptr.* = SessionEntry.init(parts.session_id, parts.directory, parts.session_file);
-        }
-        var session = gop.value_ptr;
+            const entry = SessionEntry.init(parts.session_id, parts.directory, parts.session_file);
+            try self.sessions.put(owned_id, entry);
+            break :blk self.sessions.getPtr(owned_id).?;
+        };
         try session.recordEvent(allocator, event);
         self.totals.add(event.usage);
     }
