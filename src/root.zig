@@ -5,6 +5,7 @@ const codex = @import("providers/codex.zig");
 const gemini = @import("providers/gemini.zig");
 const render = @import("render.zig");
 const io_util = @import("io_util.zig");
+const timeutil = @import("time.zig");
 pub const machine_id = @import("machine_id.zig");
 pub const uploader = @import("upload.zig");
 const empty_weekly_json = "{\"weekly\":[]}";
@@ -19,6 +20,7 @@ pub const ModelSummary = Model.ModelSummary;
 pub const DailySummary = Model.DailySummary;
 pub const SummaryTotals = Model.SummaryTotals;
 pub const parseFilterDate = Model.parseFilterDate;
+pub const parseTimezoneOffsetMinutes = timeutil.parseTimezoneOffsetMinutes;
 
 const CollectFn = *const fn (
     std.mem.Allocator,

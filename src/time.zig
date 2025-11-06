@@ -6,6 +6,8 @@ const c = @cImport({
     @cInclude("time.h");
 });
 
+pub const DEFAULT_TIMEZONE_OFFSET_MINUTES: i32 = 9 * 60;
+
 pub const TimestampError = error{
     InvalidFormat,
     InvalidDate,
@@ -13,11 +15,83 @@ pub const TimestampError = error{
     OutOfRange,
 };
 
+pub const ParseTimezoneError = error{
+    InvalidFormat,
+    OutOfRange,
+};
+
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
-pub fn localIsoDateFromTimestamp(timestamp: []const u8) TimestampError![10]u8 {
+pub fn isoDateForTimezone(timestamp: []const u8, offset_minutes: i32) TimestampError![10]u8 {
     const utc_seconds = try parseIso8601ToUtcSeconds(timestamp);
-    return utcSecondsToLocalIsoDate(utc_seconds);
+    return utcSecondsToOffsetIsoDate(utc_seconds, offset_minutes);
+}
+
+pub fn parseTimezoneOffsetMinutes(input: []const u8) ParseTimezoneError!i32 {
+    const trimmed = std.mem.trim(u8, input, " \t\r\n");
+    if (trimmed.len == 0) return error.InvalidFormat;
+
+    var idx: usize = 0;
+    if (trimmed.len >= 3 and std.ascii.eqlIgnoreCase(trimmed[0..3], "utc")) {
+        idx = 3;
+        while (idx < trimmed.len and std.ascii.isWhitespace(trimmed[idx])) : (idx += 1) {}
+    }
+
+    if (idx >= trimmed.len) return error.InvalidFormat;
+
+    var sign: i32 = 1;
+    switch (trimmed[idx]) {
+        '+' => idx += 1,
+        '-' => {
+            sign = -1;
+            idx += 1;
+        },
+        'Z', 'z' => {
+            if (idx + 1 != trimmed.len) return error.InvalidFormat;
+            return 0;
+        },
+        else => {},
+    }
+
+    if (idx >= trimmed.len) return error.InvalidFormat;
+
+    var hours: i32 = 0;
+    var hour_digits: usize = 0;
+    while (idx < trimmed.len and std.ascii.isDigit(trimmed[idx])) : (idx += 1) {
+        hours = hours * 10 + (@as(i32, trimmed[idx]) - '0');
+        hour_digits += 1;
+        if (hour_digits > 2) return error.InvalidFormat;
+    }
+    if (hour_digits == 0) return error.InvalidFormat;
+
+    var minutes: i32 = 0;
+    if (idx < trimmed.len) {
+        if (trimmed[idx] == ':') {
+            idx += 1;
+            if (idx + 2 > trimmed.len) return error.InvalidFormat;
+            minutes = try parseMinutePair(trimmed[idx .. idx + 2]);
+            idx += 2;
+        } else if (trimmed.len - idx == 2) {
+            minutes = try parseMinutePair(trimmed[idx..]);
+            idx = trimmed.len;
+        } else {
+            return error.InvalidFormat;
+        }
+    }
+
+    if (idx != trimmed.len) return error.InvalidFormat;
+    if (minutes >= 60) return error.InvalidFormat;
+
+    const total_minutes = hours * 60 + minutes;
+    const offset = sign * total_minutes;
+    if (offset < -12 * 60 or offset > 14 * 60) return error.OutOfRange;
+    return offset;
+}
+
+fn parseMinutePair(slice: []const u8) ParseTimezoneError!i32 {
+    if (slice.len != 2) return error.InvalidFormat;
+    if (!std.ascii.isDigit(slice[0]) or !std.ascii.isDigit(slice[1])) return error.InvalidFormat;
+    return (@as(i32, slice[0]) - '0') * 10 + (@as(i32, slice[1]) - '0');
 }
 
 pub fn currentTimestampIso8601(allocator: std.mem.Allocator) ![]u8 {
@@ -147,33 +221,23 @@ fn parseIso8601ToUtcSeconds(timestamp: []const u8) TimestampError!i64 {
     return seconds - offset_seconds;
 }
 
-fn utcSecondsToLocalIsoDate(utc_seconds: i64) TimestampError![10]u8 {
-    const TimeT = c.time_t;
-    const casted = std.math.cast(TimeT, utc_seconds) orelse return error.OutOfRange;
+fn utcSecondsToOffsetIsoDate(utc_seconds: i64, offset_minutes: i32) TimestampError![10]u8 {
+    const offset_seconds = @as(i64, offset_minutes) * 60;
+    const shifted = utc_seconds + offset_seconds;
+    if (shifted < 0) return error.OutOfRange;
+    const unsigned = std.math.cast(u64, shifted) orelse return error.OutOfRange;
 
-    var t_value: TimeT = casted;
-    var tm_value: c.tm = undefined;
-    if (builtin.target.os.tag == .windows) {
-        const local_ptr = c.localtime(&t_value) orelse return error.OutOfRange;
-        tm_value = local_ptr.*;
-    } else {
-        if (c.localtime_r(&t_value, &tm_value) == null) return error.OutOfRange;
-    }
-
-    const year = @as(i64, tm_value.tm_year) + 1900;
-    const month = tm_value.tm_mon + 1;
-    const day = tm_value.tm_mday;
-
-    if (year < 0 or year > 9999) return error.OutOfRange;
-    if (month < 1 or month > 12) return error.OutOfRange;
-    if (day < 1 or day > 31) return error.OutOfRange;
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = unsigned };
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
 
     var buffer: [10]u8 = undefined;
-    writeFourDigits(@as(u16, @intCast(year)), buffer[0..4]);
+    writeFourDigits(year_day.year, buffer[0..4]);
     buffer[4] = '-';
-    writeTwoDigits(@as(u8, @intCast(month)), buffer[5..7]);
+    writeTwoDigits(@as(u8, month_day.month.numeric()), buffer[5..7]);
     buffer[7] = '-';
-    writeTwoDigits(@as(u8, @intCast(day)), buffer[8..10]);
+    writeTwoDigits(@as(u8, month_day.day_index) + 1, buffer[8..10]);
     return buffer;
 }
 

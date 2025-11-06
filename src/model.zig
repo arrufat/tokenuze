@@ -1,5 +1,6 @@
 const std = @import("std");
 const io_util = @import("io_util.zig");
+const timeutil = @import("time.zig");
 
 pub const MILLION = 1_000_000.0;
 pub const PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -8,6 +9,7 @@ pub const DateFilters = struct {
     since: ?[10]u8 = null,
     until: ?[10]u8 = null,
     pretty_output: bool = false,
+    timezone_offset_minutes: i16 = @intCast(timeutil.DEFAULT_TIMEZONE_OFFSET_MINUTES),
 };
 
 pub const ParseDateError = error{

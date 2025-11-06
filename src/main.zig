@@ -153,6 +153,15 @@ fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--tz")) {
+            const value = args.next() orelse return cliError("missing value for --tz", .{});
+            const offset = tokenuze.parseTimezoneOffsetMinutes(value) catch {
+                return cliError("--tz expects offsets like +09 or -05:30", .{});
+            };
+            options.filters.timezone_offset_minutes = @intCast(offset);
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--agent")) {
             const value = args.next() orelse return cliError("missing value for --agent", .{});
             if (!agents_specified) {
@@ -219,6 +228,7 @@ fn printHelp() !void {
     const help_lines = [_]OptionLine{
         .{ .label = "--since YYYYMMDD", .desc = "Only include events on/after the date" },
         .{ .label = "--until YYYYMMDD", .desc = "Only include events on/before the date" },
+        .{ .label = "--tz <offset>", .desc = "Bucket dates in the provided timezone (default UTC+09:00)" },
         .{ .label = "--pretty", .desc = "Expand JSON output for readability" },
         .{ .label = "--agent <name>", .desc = agent_desc },
         .{ .label = "--upload", .desc = "Upload Tokenuze JSON via DASHBOARD_API_* envs" },
