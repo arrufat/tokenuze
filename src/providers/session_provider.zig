@@ -1526,10 +1526,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         },
                         .string => {
                             const name_slice = try readStringValue(reader, &key_buffer);
-                            const copied_name = try self.allocator.dupe(u8, name_slice);
                             const maybe_pricing = try self.parseEntry(reader, &scratch);
                             if (maybe_pricing) |entry| {
-                                if (self.pricing.get(copied_name) == null) {
+                                if (self.pricing.get(name_slice) == null) {
+                                    const copied_name = try self.allocator.dupe(u8, name_slice);
                                     try self.pricing.put(copied_name, entry);
                                 }
                             }

@@ -189,6 +189,14 @@ pub const ModelPricing = struct {
 
 pub const PricingMap = std.StringHashMap(ModelPricing);
 
+pub fn deinitPricingMap(map: *PricingMap, allocator: std.mem.Allocator) void {
+    var iterator = map.iterator();
+    while (iterator.next()) |entry| {
+        allocator.free(entry.key_ptr.*);
+    }
+    map.deinit();
+}
+
 pub const ModelSummary = struct {
     name: []const u8,
     is_fallback: bool,
@@ -221,8 +229,13 @@ pub const DailySummary = struct {
     }
 
     pub fn deinit(self: *DailySummary, allocator: std.mem.Allocator) void {
+        for (self.models.items) |model| {
+            allocator.free(model.name);
+        }
         self.models.deinit(allocator);
         self.missing_pricing.deinit(allocator);
+        allocator.free(self.iso_date);
+        allocator.free(self.display_date);
     }
 };
 

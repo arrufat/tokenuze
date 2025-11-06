@@ -244,7 +244,7 @@ fn collectSummary(
     errdefer totals.deinit(allocator);
 
     var pricing_map = Model.PricingMap.init(allocator);
-    errdefer pricing_map.deinit();
+    defer Model.deinitPricingMap(&pricing_map, allocator);
 
     const temp_allocator = std.heap.page_allocator;
 
@@ -264,19 +264,27 @@ fn collectSummary(
         if (!selection.includesIndex(idx)) continue;
         const before_events = summary_builder.eventCount();
         const before_pricing = pricing_map.count();
-        var collect_phase = try PhaseTracker.start(progress_parent, provider.phase_label, 0);
-        try provider.collect(allocator, temp_allocator, &summary_builder, filters, &pricing_map, collect_phase.progress());
-        const elapsed = collect_phase.elapsedMs();
-        collect_phase.finish();
+        const stats = blk: {
+            var collect_phase = try PhaseTracker.start(progress_parent, provider.phase_label, 0);
+            defer collect_phase.finish();
+            try provider.collect(allocator, temp_allocator, &summary_builder, filters, &pricing_map, collect_phase.progress());
+            break :blk .{
+                .elapsed = collect_phase.elapsedMs(),
+                .events_added = summary_builder.eventCount() - before_events,
+                .total_events = summary_builder.eventCount(),
+                .pricing_total = pricing_map.count(),
+                .pricing_added = pricing_map.count() - before_pricing,
+            };
+        };
         std.log.info(
             "phase.{s} completed in {d:.2}ms (events += {d}, total_events={d}, pricing_models={d}, pricing_added={d})",
             .{
                 provider.phase_label,
-                elapsed,
-                summary_builder.eventCount() - before_events,
-                summary_builder.eventCount(),
-                pricing_map.count(),
-                pricing_map.count() - before_pricing,
+                stats.elapsed,
+                stats.events_added,
+                stats.total_events,
+                stats.pricing_total,
+                stats.pricing_added,
             },
         );
     }
@@ -291,33 +299,42 @@ fn collectSummary(
     var missing_set = std.StringHashMap(u8).init(allocator);
     defer missing_set.deinit();
 
-    var pricing_phase = try PhaseTracker.start(progress_parent, "apply pricing", summaries.len);
-    for (summaries) |*summary| {
-        Model.applyPricing(allocator, summary, &pricing_map, &missing_set);
-        std.sort.pdq(ModelSummary, summary.models.items, {}, modelLessThan);
-        if (pricing_phase.progress()) |node| std.Progress.Node.completeOne(node);
-    }
-    pricing_phase.finish();
+    const pricing_elapsed = blk: {
+        var pricing_phase = try PhaseTracker.start(progress_parent, "apply pricing", summaries.len);
+        defer pricing_phase.finish();
+        for (summaries) |*summary| {
+            Model.applyPricing(allocator, summary, &pricing_map, &missing_set);
+            std.sort.pdq(ModelSummary, summary.models.items, {}, modelLessThan);
+            if (pricing_phase.progress()) |node| std.Progress.Node.completeOne(node);
+        }
+        break :blk pricing_phase.elapsedMs();
+    };
     std.log.info(
         "phase.apply_pricing completed in {d:.2}ms (days={d})",
-        .{ pricing_phase.elapsedMs(), summaries.len },
+        .{ pricing_elapsed, summaries.len },
     );
 
-    var sort_days_phase = try PhaseTracker.start(progress_parent, "sort days", 0);
-    std.sort.pdq(DailySummary, summaries, {}, summaryLessThan);
-    sort_days_phase.finish();
+    const sort_elapsed = blk: {
+        var sort_days_phase = try PhaseTracker.start(progress_parent, "sort days", 0);
+        defer sort_days_phase.finish();
+        std.sort.pdq(DailySummary, summaries, {}, summaryLessThan);
+        break :blk sort_days_phase.elapsedMs();
+    };
     std.log.info(
         "phase.sort_days completed in {d:.2}ms (days={d})",
-        .{ sort_days_phase.elapsedMs(), summaries.len },
+        .{ sort_elapsed, summaries.len },
     );
 
-    var totals_phase = try PhaseTracker.start(progress_parent, "totals", 0);
-    Model.accumulateTotals(allocator, summaries, &totals);
-    try Model.collectMissingModels(allocator, &missing_set, &totals.missing_pricing);
-    totals_phase.finish();
+    const totals_elapsed = blk: {
+        var totals_phase = try PhaseTracker.start(progress_parent, "totals", 0);
+        defer totals_phase.finish();
+        Model.accumulateTotals(allocator, summaries, &totals);
+        try Model.collectMissingModels(allocator, &missing_set, &totals.missing_pricing);
+        break :blk totals_phase.elapsedMs();
+    };
     std.log.info(
         "phase.totals completed in {d:.2}ms (missing_pricing={d})",
-        .{ totals_phase.elapsedMs(), totals.missing_pricing.items.len },
+        .{ totals_elapsed, totals.missing_pricing.items.len },
     );
 
     std.log.info("phase.total runtime {d:.2}ms", .{nsToMs(total_timer.read())});
