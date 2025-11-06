@@ -11,6 +11,13 @@ const DEFAULT_API_URL = "http://localhost:8000";
 const empty_sessions_json = "{\"sessions\":[],\"totals\":{}}";
 const empty_weekly_json = "{\"weekly\":[]}";
 
+const UploadError = error{
+    Unauthorized,
+    ValidationFailed,
+    ServerError,
+    UnexpectedResponse,
+};
+
 pub fn run(allocator: std.mem.Allocator, providers: []const ProviderUpload) !void {
     var env = try EnvConfig.load(allocator);
     defer env.deinit(allocator);
@@ -36,7 +43,7 @@ pub fn run(allocator: std.mem.Allocator, providers: []const ProviderUpload) !voi
     };
     defer response.deinit(allocator);
 
-    handleResponse(response);
+    try handleResponse(response);
 }
 
 const EnvConfig = struct {
@@ -295,22 +302,26 @@ fn trimTrailingSlash(value: []const u8) []const u8 {
     return value[0..end];
 }
 
-fn handleResponse(response: HttpResponse) void {
+fn handleResponse(response: HttpResponse) UploadError!void {
     switch (response.status) {
         .ok => {
             std.log.info("Usage reported successfully", .{});
         },
         .unauthorized => {
             std.log.err("Authentication failed: Invalid or inactive API key", .{});
+            return UploadError.Unauthorized;
         },
         .unprocessable_entity => {
             std.log.err("Data validation error. See server logs for details.", .{});
+            return UploadError.ValidationFailed;
         },
         .internal_server_error => {
             std.log.err("Server error. Please try again later.", .{});
+            return UploadError.ServerError;
         },
         else => {
             std.log.err("Failed to report usage (HTTP {d}). Check server logs for diagnostics.", .{@intFromEnum(response.status)});
+            return UploadError.UnexpectedResponse;
         },
     }
 }
