@@ -428,17 +428,21 @@ const CodexLineHandler = struct {
     model_state: *ModelState,
     timezone_offset_minutes: i32,
 
-    fn handle(self: *CodexLineHandler, line: []const u8, _: usize) !void {
-        try self.processSessionLine(line);
+    fn handle(self: *CodexLineHandler, line: []const u8, line_index: usize) !void {
+        try self.processSessionLine(line, line_index);
     }
 
-    fn processSessionLine(self: *CodexLineHandler, line: []const u8) !void {
+    fn processSessionLine(self: *CodexLineHandler, line: []const u8, line_index: usize) !void {
         const trimmed = std.mem.trim(u8, line, " \t\r\n");
         if (trimmed.len == 0) return;
 
         resetScanner(self.scanner, trimmed);
 
-        const start_token = self.scanner.next() catch {
+        const start_token = self.scanner.next() catch |err| {
+            std.log.warn(
+                "{s}: failed to parse codex session file '{s}' line {d} ({s})",
+                .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
+            );
             return;
         };
         if (start_token != .object_begin) return;
@@ -451,7 +455,13 @@ const CodexLineHandler = struct {
         var is_event_msg = false;
 
         while (true) {
-            const key_token = self.scanner.nextAlloc(self.allocator, .alloc_if_needed) catch return;
+            const key_token = self.scanner.nextAlloc(self.allocator, .alloc_if_needed) catch |err| {
+                std.log.warn(
+                    "{s}: failed to parse codex session file '{s}' line {d} ({s})",
+                    .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
+                );
+                return;
+            };
 
             switch (key_token) {
                 .object_end => break,
@@ -466,7 +476,13 @@ const CodexLineHandler = struct {
                         &timestamp_token,
                         &is_turn_context,
                         &is_event_msg,
-                    ) catch return;
+                    ) catch |err| {
+                        std.log.warn(
+                            "{s}: failed to parse codex session file '{s}' line {d} ({s})",
+                            .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
+                        );
+                        return;
+                    };
                 },
                 .allocated_string => |buf| {
                     var key = model.TokenBuffer{ .slice = buf, .owned = buf };
@@ -479,7 +495,13 @@ const CodexLineHandler = struct {
                         &timestamp_token,
                         &is_turn_context,
                         &is_event_msg,
-                    ) catch return;
+                    ) catch |err| {
+                        std.log.warn(
+                            "{s}: failed to parse codex session file '{s}' line {d} ({s})",
+                            .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
+                        );
+                        return;
+                    };
                 },
                 else => return,
             }
