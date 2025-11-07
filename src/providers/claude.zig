@@ -7,6 +7,17 @@ const RawUsage = model.RawTokenUsage;
 const MessageDeduper = SessionProvider.MessageDeduper;
 const ModelState = SessionProvider.ModelState;
 
+const CLAUDE_USAGE_FIELDS = [_]SessionProvider.UsageFieldDescriptor{
+    .{ .key = "input_tokens", .field = .input_tokens },
+    .{ .key = "cache_creation_input_tokens", .field = .cache_creation_input_tokens },
+    .{ .key = "cache_read_input_tokens", .field = .cached_input_tokens },
+    .{ .key = "output_tokens", .field = .output_tokens },
+    .{ .key = "input_tokens", .field = .total_tokens, .mode = .add },
+    .{ .key = "cache_creation_input_tokens", .field = .total_tokens, .mode = .add },
+    .{ .key = "cache_read_input_tokens", .field = .total_tokens, .mode = .add },
+    .{ .key = "output_tokens", .field = .total_tokens, .mode = .add },
+};
+
 const ProviderExports = SessionProvider.makeProvider(.{
     .name = "claude",
     .sessions_dir_suffix = "/.claude/projects",
@@ -242,23 +253,7 @@ fn shouldEmitClaudeMessage(
 }
 
 fn parseClaudeUsage(usage_obj: std.json.ObjectMap) RawUsage {
-    const direct_input = SessionProvider.jsonValueToU64(usage_obj.get("input_tokens"));
-    const cache_creation = SessionProvider.jsonValueToU64(usage_obj.get("cache_creation_input_tokens"));
-    const cached_reads = SessionProvider.jsonValueToU64(usage_obj.get("cache_read_input_tokens"));
-    const output_tokens = SessionProvider.jsonValueToU64(usage_obj.get("output_tokens"));
-
-    const input_total = std.math.add(u64, direct_input, cache_creation) catch std.math.maxInt(u64);
-    const with_cached = std.math.add(u64, input_total, cached_reads) catch std.math.maxInt(u64);
-    const total_tokens = std.math.add(u64, with_cached, output_tokens) catch std.math.maxInt(u64);
-
-    return .{
-        .input_tokens = direct_input,
-        .cache_creation_input_tokens = cache_creation,
-        .cached_input_tokens = cached_reads,
-        .output_tokens = output_tokens,
-        .reasoning_output_tokens = 0,
-        .total_tokens = total_tokens,
-    };
+    return SessionProvider.parseUsageObject(usage_obj, CLAUDE_USAGE_FIELDS[0..]);
 }
 
 test "claude parser emits assistant usage events and respects overrides" {

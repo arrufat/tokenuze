@@ -123,6 +123,25 @@ pub const UsageAccumulator = struct {
         }
     }
 
+    pub fn addField(self: *UsageAccumulator, field: UsageField, value: u64) void {
+        if (value == 0) return;
+        switch (field) {
+            .input_tokens => self.raw.input_tokens = self.raw.input_tokens +| value,
+            .cache_creation_input_tokens => self.raw.cache_creation_input_tokens = self.raw.cache_creation_input_tokens +| value,
+            .cached_input_tokens => {
+                const current = self.cached_direct orelse 0;
+                self.cached_direct = current +| value;
+            },
+            .cache_read_input_tokens => {
+                const current = self.cached_fallback orelse 0;
+                self.cached_fallback = current +| value;
+            },
+            .output_tokens => self.raw.output_tokens = self.raw.output_tokens +| value,
+            .reasoning_output_tokens => self.raw.reasoning_output_tokens = self.raw.reasoning_output_tokens +| value,
+            .total_tokens => self.raw.total_tokens = self.raw.total_tokens +| value,
+        }
+    }
+
     pub fn finalize(self: *UsageAccumulator) RawTokenUsage {
         if (self.cached_direct) |direct| {
             if (direct > 0) {

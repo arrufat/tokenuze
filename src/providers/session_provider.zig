@@ -223,6 +223,32 @@ pub fn jsonValueToU64(maybe_value: ?std.json.Value) u64 {
     };
 }
 
+pub const UsageValueMode = enum {
+    set,
+    add,
+};
+
+pub const UsageFieldDescriptor = struct {
+    key: []const u8,
+    field: Model.UsageField,
+    mode: UsageValueMode = .set,
+};
+
+pub fn parseUsageObject(
+    usage_obj: std.json.ObjectMap,
+    descriptors: []const UsageFieldDescriptor,
+) Model.RawTokenUsage {
+    var accumulator = Model.UsageAccumulator{};
+    for (descriptors) |descriptor| {
+        const value = jsonValueToU64(usage_obj.get(descriptor.key));
+        switch (descriptor.mode) {
+            .set => accumulator.applyField(descriptor.field, value),
+            .add => accumulator.addField(descriptor.field, value),
+        }
+    }
+    return accumulator.finalize();
+}
+
 pub const JsonlStreamOptions = struct {
     max_bytes: usize = 128 * 1024 * 1024,
     delimiter: u8 = '\n',
@@ -910,6 +936,45 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             try std.testing.expect(pricing.get("gemini/gemini-flash-latest") != null);
             try std.testing.expect(pricing.get("gemini-flash-latest") != null);
+        }
+
+        test "usage descriptors map and accumulate token fields" {
+            const allocator = std.testing.allocator;
+            const json_src =
+                \\{
+                \\  "input_direct": 150,
+                \\  "cache_read": 40,
+                \\  "output_primary": 25,
+                \\  "output_tool": 5,
+                \\  "thoughts": 7
+                \\}
+            ;
+
+            var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_src, .{});
+            defer parsed.deinit();
+            const usage_obj = switch (parsed.value) {
+                .object => |obj| obj,
+                else => unreachable,
+            };
+
+            const descriptors = [_]UsageFieldDescriptor{
+                .{ .key = "input_direct", .field = .input_tokens },
+                .{ .key = "cache_read", .field = .cached_input_tokens },
+                .{ .key = "output_primary", .field = .output_tokens },
+                .{ .key = "output_tool", .field = .output_tokens, .mode = .add },
+                .{ .key = "thoughts", .field = .reasoning_output_tokens },
+                .{ .key = "input_direct", .field = .total_tokens, .mode = .add },
+                .{ .key = "cache_read", .field = .total_tokens, .mode = .add },
+                .{ .key = "output_primary", .field = .total_tokens, .mode = .add },
+                .{ .key = "output_tool", .field = .total_tokens, .mode = .add },
+            };
+
+            const usage = parseUsageObject(usage_obj, descriptors[0..]);
+            try std.testing.expectEqual(@as(u64, 150), usage.input_tokens);
+            try std.testing.expectEqual(@as(u64, 40), usage.cached_input_tokens);
+            try std.testing.expectEqual(@as(u64, 30), usage.output_tokens);
+            try std.testing.expectEqual(@as(u64, 7), usage.reasoning_output_tokens);
+            try std.testing.expectEqual(@as(u64, 220), usage.total_tokens);
         }
     };
 }

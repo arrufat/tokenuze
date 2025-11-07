@@ -6,6 +6,15 @@ const SessionProvider = @import("session_provider.zig");
 const RawUsage = model.RawTokenUsage;
 const ModelState = SessionProvider.ModelState;
 
+const GEMINI_USAGE_FIELDS = [_]SessionProvider.UsageFieldDescriptor{
+    .{ .key = "input", .field = .input_tokens },
+    .{ .key = "cached", .field = .cached_input_tokens },
+    .{ .key = "output", .field = .output_tokens },
+    .{ .key = "tool", .field = .output_tokens, .mode = .add },
+    .{ .key = "thoughts", .field = .reasoning_output_tokens },
+    .{ .key = "total", .field = .total_tokens },
+};
+
 const fallback_pricing = [_]SessionProvider.FallbackPricingEntry{
     .{ .name = "gemini-2.5-pro", .pricing = .{
         .input_cost_per_m = 1.25,
@@ -158,13 +167,7 @@ fn parseGeminiSessionFile(
 }
 
 fn parseGeminiUsage(tokens_obj: std.json.ObjectMap) RawUsage {
-    return .{
-        .input_tokens = SessionProvider.jsonValueToU64(tokens_obj.get("input")),
-        .cached_input_tokens = SessionProvider.jsonValueToU64(tokens_obj.get("cached")),
-        .output_tokens = SessionProvider.jsonValueToU64(tokens_obj.get("output")) + SessionProvider.jsonValueToU64(tokens_obj.get("tool")),
-        .reasoning_output_tokens = SessionProvider.jsonValueToU64(tokens_obj.get("thoughts")),
-        .total_tokens = SessionProvider.jsonValueToU64(tokens_obj.get("total")),
-    };
+    return SessionProvider.parseUsageObject(tokens_obj, GEMINI_USAGE_FIELDS[0..]);
 }
 
 test "gemini parser converts message totals into usage deltas" {
