@@ -93,6 +93,8 @@ fn modelSliceFrom(comptime T: type, raw_model: T) ?[]const u8 {
                     .number_string => |slice| slice,
                     else => null,
                 };
+            } else if (T == JsonTokenSlice) {
+                return raw_model.view();
             }
             return null;
         },
@@ -646,17 +648,17 @@ const PricingFeedParser = struct {
 
 /// Token returned by `std.json.Reader.nextAlloc`, remembering whether storage
 /// was borrowed from the reader buffer or newly allocated.
-const JsonTokenSlice = union(enum) {
+pub const JsonTokenSlice = union(enum) {
     borrowed: []const u8,
     owned: []u8,
 
-    fn view(self: JsonTokenSlice) []const u8 {
+    pub fn view(self: JsonTokenSlice) []const u8 {
         return switch (self) {
             .borrowed, .owned => |val| val,
         };
     }
 
-    fn deinit(self: *JsonTokenSlice, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *JsonTokenSlice, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .borrowed => {},
             .owned => |buf| allocator.free(buf),
@@ -664,7 +666,7 @@ const JsonTokenSlice = union(enum) {
         self.* = JsonTokenSlice{ .borrowed = "" };
     }
 
-    fn fromString(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
+    pub fn fromString(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
         const token = try reader.nextAlloc(allocator, .alloc_if_needed);
         return switch (token) {
             .string => |slice| .{ .borrowed = slice },
@@ -673,7 +675,7 @@ const JsonTokenSlice = union(enum) {
         };
     }
 
-    fn fromNumber(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
+    pub fn fromNumber(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
         const token = try reader.nextAlloc(allocator, .alloc_if_needed);
         return switch (token) {
             .number => |slice| .{ .borrowed = slice },

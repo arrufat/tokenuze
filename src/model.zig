@@ -96,16 +96,6 @@ pub const RawTokenUsage = struct {
     total_tokens: u64 = 0,
 };
 
-pub const TokenBuffer = struct {
-    slice: []const u8,
-    owned: ?[]u8 = null,
-
-    pub fn release(self: *TokenBuffer, allocator: std.mem.Allocator) void {
-        if (self.owned) |buf| allocator.free(buf);
-        self.* = undefined;
-    }
-};
-
 pub const UsageAccumulator = struct {
     raw: RawTokenUsage = .{},
     cached_direct: ?u64 = null,

@@ -3,18 +3,18 @@ const model = @import("../model.zig");
 const provider = @import("provider.zig");
 
 const RawUsage = model.RawTokenUsage;
-const TokenString = model.TokenBuffer;
+const TokenString = provider.JsonTokenSlice;
 const ModelState = provider.ModelState;
 
 const PayloadResult = struct {
-    payload_type: ?model.TokenBuffer = null,
-    model: ?model.TokenBuffer = null,
+    payload_type: ?TokenString = null,
+    model: ?TokenString = null,
     last_usage: ?RawUsage = null,
     total_usage: ?RawUsage = null,
 
     fn deinit(self: *PayloadResult, allocator: std.mem.Allocator) void {
-        if (self.payload_type) |*tok| tok.release(allocator);
-        if (self.model) |*tok| tok.release(allocator);
+        if (self.payload_type) |*tok| tok.deinit(allocator);
+        if (self.model) |*tok| tok.deinit(allocator);
         self.* = .{};
     }
 };
@@ -114,11 +114,12 @@ fn parseObjectField(
 ) ParserError!void {
     if (std.mem.eql(u8, key, "type")) {
         var value = try readStringToken(scanner, allocator);
-        defer value.release(allocator);
-        if (std.mem.eql(u8, value.slice, "turn_context")) {
+        defer value.deinit(allocator);
+        const type_slice = value.view();
+        if (std.mem.eql(u8, type_slice, "turn_context")) {
             is_turn_context.* = true;
             is_event_msg.* = false;
-        } else if (std.mem.eql(u8, value.slice, "event_msg")) {
+        } else if (std.mem.eql(u8, type_slice, "event_msg")) {
             is_event_msg.* = true;
             is_turn_context.* = false;
         }
@@ -126,7 +127,7 @@ fn parseObjectField(
     }
 
     if (std.mem.eql(u8, key, "timestamp")) {
-        if (timestamp_token.*) |*existing| existing.release(allocator);
+        if (timestamp_token.*) |*existing| existing.deinit(allocator);
         timestamp_token.* = try readStringToken(scanner, allocator);
         return;
     }
@@ -142,8 +143,8 @@ fn parseObjectField(
 fn readStringToken(scanner: *std.json.Scanner, allocator: std.mem.Allocator) ParserError!TokenString {
     const token = try scanner.nextAlloc(allocator, .alloc_if_needed);
     return switch (token) {
-        .string => |slice| TokenString{ .slice = slice },
-        .allocated_string => |buf| TokenString{ .slice = buf, .owned = buf },
+        .string => |slice| TokenString{ .borrowed = slice },
+        .allocated_string => |buf| TokenString{ .owned = buf },
         else => ParseError.UnexpectedToken,
     };
 }
@@ -163,28 +164,28 @@ fn readOptionalStringToken(scanner: *std.json.Scanner, allocator: std.mem.Alloca
 fn readNumberToken(scanner: *std.json.Scanner, allocator: std.mem.Allocator) ParserError!TokenString {
     const token = try scanner.nextAlloc(allocator, .alloc_if_needed);
     return switch (token) {
-        .number => |slice| TokenString{ .slice = slice },
-        .allocated_number => |buf| TokenString{ .slice = buf, .owned = buf },
+        .number => |slice| TokenString{ .borrowed = slice },
+        .allocated_number => |buf| TokenString{ .owned = buf },
         else => ParseError.UnexpectedToken,
     };
 }
 
 fn replaceToken(dest: *?TokenString, allocator: std.mem.Allocator, token: TokenString) void {
-    if (dest.*) |*existing| existing.release(allocator);
+    if (dest.*) |*existing| existing.deinit(allocator);
     dest.* = token;
 }
 
 fn captureModelToken(dest: *?TokenString, allocator: std.mem.Allocator, token: TokenString) void {
-    if (token.slice.len == 0) {
+    if (token.view().len == 0) {
         var tmp = token;
-        tmp.release(allocator);
+        tmp.deinit(allocator);
         return;
     }
     if (dest.* == null) {
         dest.* = token;
     } else {
         var tmp = token;
-        tmp.release(allocator);
+        tmp.deinit(allocator);
     }
 }
 
@@ -296,14 +297,14 @@ fn parseUsageObject(
         switch (key_token) {
             .object_end => break,
             .string => |slice| {
-                var key = TokenString{ .slice = slice };
-                defer key.release(allocator);
-                try parseUsageField(allocator, scanner, key.slice, &accumulator);
+                var key = TokenString{ .borrowed = slice };
+                defer key.deinit(allocator);
+                try parseUsageField(allocator, scanner, key.view(), &accumulator);
             },
             .allocated_string => |buf| {
-                var key = TokenString{ .slice = buf, .owned = buf };
-                defer key.release(allocator);
-                try parseUsageField(allocator, scanner, key.slice, &accumulator);
+                var key = TokenString{ .owned = buf };
+                defer key.deinit(allocator);
+                try parseUsageField(allocator, scanner, key.view(), &accumulator);
             },
             else => return ParseError.UnexpectedToken,
         }
@@ -340,9 +341,9 @@ fn parseModelValue(
                 switch (key_token) {
                     .object_end => break,
                     .string => |slice| {
-                        var key = TokenString{ .slice = slice };
-                        defer key.release(allocator);
-                        if (isModelKey(key.slice)) {
+                        var key = TokenString{ .borrowed = slice };
+                        defer key.deinit(allocator);
+                        if (isModelKey(key.view())) {
                             const maybe_token = try readOptionalStringToken(scanner, allocator);
                             if (maybe_token) |token| captureModelToken(storage, allocator, token);
                         } else {
@@ -350,9 +351,9 @@ fn parseModelValue(
                         }
                     },
                     .allocated_string => |buf| {
-                        var key = TokenString{ .slice = buf, .owned = buf };
-                        defer key.release(allocator);
-                        if (isModelKey(key.slice)) {
+                        var key = TokenString{ .owned = buf };
+                        defer key.deinit(allocator);
+                        if (isModelKey(key.view())) {
                             const maybe_token = try readOptionalStringToken(scanner, allocator);
                             if (maybe_token) |token| captureModelToken(storage, allocator, token);
                         } else {
@@ -446,8 +447,8 @@ const CodexLineHandler = struct {
 
         var payload_result = PayloadResult{};
         defer payload_result.deinit(self.allocator);
-        var timestamp_token: ?model.TokenBuffer = null;
-        defer if (timestamp_token) |*tok| tok.release(self.allocator);
+        var timestamp_token: ?TokenString = null;
+        defer if (timestamp_token) |*tok| tok.deinit(self.allocator);
         var is_turn_context = false;
         var is_event_msg = false;
 
@@ -463,12 +464,12 @@ const CodexLineHandler = struct {
             switch (key_token) {
                 .object_end => break,
                 .string => |slice| {
-                    var key = model.TokenBuffer{ .slice = slice, .owned = null };
-                    defer key.release(self.allocator);
+                    var key = TokenString{ .borrowed = slice };
+                    defer key.deinit(self.allocator);
                     parseObjectField(
                         self.allocator,
                         self.scanner,
-                        key.slice,
+                        key.view(),
                         &payload_result,
                         &timestamp_token,
                         &is_turn_context,
@@ -482,12 +483,12 @@ const CodexLineHandler = struct {
                     };
                 },
                 .allocated_string => |buf| {
-                    var key = model.TokenBuffer{ .slice = buf, .owned = buf };
-                    defer key.release(self.allocator);
+                    var key = TokenString{ .owned = buf };
+                    defer key.deinit(self.allocator);
                     parseObjectField(
                         self.allocator,
                         self.scanner,
-                        key.slice,
+                        key.view(),
                         &payload_result,
                         &timestamp_token,
                         &is_turn_context,
@@ -516,7 +517,7 @@ const CodexLineHandler = struct {
                     self.ctx.logWarning(self.file_path, "failed to capture model", err);
                     return;
                 };
-                model_token.release(self.allocator);
+                model_token.deinit(self.allocator);
             }
             return;
         }
@@ -525,17 +526,17 @@ const CodexLineHandler = struct {
 
         var payload_type_is_token_count = false;
         if (payload_result.payload_type) |token| {
-            payload_type_is_token_count = std.mem.eql(u8, token.slice, "token_count");
+            payload_type_is_token_count = std.mem.eql(u8, token.view(), "token_count");
         }
         if (!payload_type_is_token_count) return;
 
         var raw_timestamp = timestamp_token.?;
         timestamp_token = null;
-        const timestamp_info = try provider.timestampFromSlice(self.allocator, raw_timestamp.slice, self.timezone_offset_minutes) orelse {
-            raw_timestamp.release(self.allocator);
+        const timestamp_info = try provider.timestampFromSlice(self.allocator, raw_timestamp.view(), self.timezone_offset_minutes) orelse {
+            raw_timestamp.deinit(self.allocator);
             return;
         };
-        raw_timestamp.release(self.allocator);
+        raw_timestamp.deinit(self.allocator);
         const timestamp_copy = timestamp_info.text;
         const iso_date = timestamp_info.local_iso_date;
 
@@ -562,7 +563,7 @@ const CodexLineHandler = struct {
         if (payload_result.model) |token| {
             var model_token = token;
             payload_result.model = null;
-            model_token.release(self.allocator);
+            model_token.deinit(self.allocator);
         }
 
         const event = model.TokenUsageEvent{
@@ -607,14 +608,14 @@ fn walkObject(
         switch (key_token) {
             .object_end => break,
             .string => |slice| {
-                var key = TokenString{ .slice = slice };
-                defer key.release(allocator);
-                try handler(context, allocator, scanner, key.slice);
+                var key = TokenString{ .borrowed = slice };
+                defer key.deinit(allocator);
+                try handler(context, allocator, scanner, key.view());
             },
             .allocated_string => |buf| {
-                var key = TokenString{ .slice = buf, .owned = buf };
-                defer key.release(allocator);
-                try handler(context, allocator, scanner, key.slice);
+                var key = TokenString{ .owned = buf };
+                defer key.deinit(allocator);
+                try handler(context, allocator, scanner, key.view());
             },
             else => return ParseError.UnexpectedToken,
         }
@@ -630,8 +631,8 @@ fn parseU64Value(scanner: *std.json.Scanner, allocator: std.mem.Allocator) Parse
         },
         .number => {
             var number = try readNumberToken(scanner, allocator);
-            defer number.release(allocator);
-            return model.parseTokenNumber(number.slice);
+            defer number.deinit(allocator);
+            return model.parseTokenNumber(number.view());
         },
         else => return ParseError.UnexpectedToken,
     }
