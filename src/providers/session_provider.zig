@@ -27,7 +27,6 @@ var remote_pricing_loaded = std.atomic.Value(bool).init(false);
 
 pub const RemotePricingStats = struct {
     attempted: bool = false,
-    success: bool = false,
     models_added: usize = 0,
     elapsed_ms: f64 = 0,
     failure: ?anyerror = null,
@@ -50,11 +49,9 @@ pub fn loadRemotePricingOnce(
     };
     stats.elapsed_ms = nsToMs(fetch_timer.read());
     if (fetch_error) |err| {
-        stats.success = false;
         stats.failure = err;
     } else {
         stats.models_added = pricing.count() - before_fetch;
-        stats.success = true;
         remote_pricing_loaded.store(true, .release);
     }
     return stats;

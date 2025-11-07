@@ -381,15 +381,15 @@ fn loadPricingOnce(
     const before_models = pricing.count();
     const remote_stats = try session_provider.loadRemotePricingOnce(allocator, temp_allocator, pricing);
     if (remote_stats.attempted) {
-        if (remote_stats.success) {
+        if (remote_stats.failure) |err| {
+            std.log.warn(
+                "pricing.remote_fetch failed after {d:.2}ms ({s})",
+                .{ remote_stats.elapsed_ms, @errorName(err) },
+            );
+        } else {
             std.log.info(
                 "pricing.remote_fetch completed in {d:.2}ms (models += {d})",
                 .{ remote_stats.elapsed_ms, remote_stats.models_added },
-            );
-        } else {
-            std.log.warn(
-                "pricing.remote_fetch failed after {d:.2}ms ({s})",
-                .{ remote_stats.elapsed_ms, @errorName(remote_stats.failure.?) },
             );
         }
     } else {
