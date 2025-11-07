@@ -52,7 +52,7 @@ const ProviderExports = provider.makeProvider(.{
     .legacy_fallback_model = "gpt-5",
     .fallback_pricing = fallback_pricing[0..],
     .cached_counts_overlap_input = true,
-    .parse_session_fn = parseSessionFile,
+    .parse_session_fn = parseCodexSessionFile,
 });
 
 pub const collect = ProviderExports.collect;
@@ -60,7 +60,7 @@ pub const streamEvents = ProviderExports.streamEvents;
 pub const loadPricingData = ProviderExports.loadPricingData;
 pub const EventConsumer = ProviderExports.EventConsumer;
 
-fn parseSessionFile(
+fn parseCodexSessionFile(
     allocator: std.mem.Allocator,
     ctx: *const provider.ParseContext,
     session_id: []const u8,
@@ -70,17 +70,6 @@ fn parseSessionFile(
     events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     _ = deduper;
-    try parseCodexSessionFile(allocator, ctx, session_id, file_path, timezone_offset_minutes, events);
-}
-
-fn parseCodexSessionFile(
-    allocator: std.mem.Allocator,
-    ctx: *const provider.ParseContext,
-    session_id: []const u8,
-    file_path: []const u8,
-    timezone_offset_minutes: i32,
-    events: *std.ArrayList(model.TokenUsageEvent),
-) !void {
     var previous_totals: ?RawUsage = null;
     var model_state = ModelState{};
 
