@@ -252,7 +252,7 @@ const JsonTokenSlice = union(enum) {
             .borrowed => {},
             .owned => |buf| allocator.free(buf),
         }
-        self.* = JsonTokenSlice{ .borrowed = &.{} };
+        self.* = JsonTokenSlice{ .borrowed = "" };
     }
 
     fn fromString(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
