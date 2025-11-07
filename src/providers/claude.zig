@@ -1,9 +1,9 @@
 const std = @import("std");
-const Model = @import("../model.zig");
+const model = @import("../model.zig");
 const timeutil = @import("../time.zig");
 const SessionProvider = @import("session_provider.zig");
 
-const RawUsage = Model.RawTokenUsage;
+const RawUsage = model.RawTokenUsage;
 const MessageDeduper = SessionProvider.MessageDeduper;
 const ModelState = SessionProvider.ModelState;
 
@@ -28,7 +28,7 @@ fn parseSessionFile(
     file_path: []const u8,
     deduper: ?*SessionProvider.MessageDeduper,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     try parseClaudeSessionFile(allocator, ctx, session_id, file_path, deduper, timezone_offset_minutes, events);
 }
@@ -40,7 +40,7 @@ fn parseClaudeSessionFile(
     file_path: []const u8,
     deduper: ?*MessageDeduper,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     var session_label = session_id;
     var session_label_overridden = false;
@@ -81,7 +81,7 @@ const ClaudeLineHandler = struct {
     session_label: *[]const u8,
     session_label_overridden: *bool,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
     model_state: *ModelState,
 
     fn handle(self: *ClaudeLineHandler, line: []const u8, line_index: usize) !void {
@@ -111,7 +111,7 @@ fn handleClaudeLine(
     session_label: *[]const u8,
     session_label_overridden: *bool,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
     model_state: *ModelState,
 ) !void {
     var parsed_doc = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch |err| {
@@ -162,7 +162,7 @@ fn emitClaudeEvent(
     deduper: ?*MessageDeduper,
     session_label: []const u8,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
     model_state: *ModelState,
 ) !void {
     const type_value = record.get("type") orelse return;
@@ -215,12 +215,12 @@ fn emitClaudeEvent(
     const resolved_model = SessionProvider.resolveModel(ctx, model_state, extracted_model) orelse return;
 
     const raw = parseClaudeUsage(usage_obj);
-    const usage = Model.TokenUsage.fromRaw(raw);
+    const usage = model.TokenUsage.fromRaw(raw);
     if (usage.input_tokens == 0 and usage.cached_input_tokens == 0 and usage.output_tokens == 0 and usage.reasoning_output_tokens == 0) {
         return;
     }
 
-    const event = Model.TokenUsageEvent{
+    const event = model.TokenUsageEvent{
         .session_id = session_label,
         .timestamp = owned_timestamp,
         .local_iso_date = iso_date,
@@ -279,7 +279,7 @@ test "claude parser emits assistant usage events and respects overrides" {
     defer arena_state.deinit();
     const worker_allocator = arena_state.allocator();
 
-    var events: std.ArrayList(Model.TokenUsageEvent) = .empty;
+    var events: std.ArrayList(model.TokenUsageEvent) = .empty;
     defer events.deinit(worker_allocator);
 
     var deduper = try MessageDeduper.init(worker_allocator);

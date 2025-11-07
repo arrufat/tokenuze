@@ -1,15 +1,15 @@
 const std = @import("std");
-const Model = @import("../model.zig");
+const model = @import("../model.zig");
 const timeutil = @import("../time.zig");
 const SessionProvider = @import("session_provider.zig");
 
-const RawUsage = Model.RawTokenUsage;
-const TokenString = Model.TokenBuffer;
+const RawUsage = model.RawTokenUsage;
+const TokenString = model.TokenBuffer;
 const ModelState = SessionProvider.ModelState;
 
 const PayloadResult = struct {
-    payload_type: ?Model.TokenBuffer = null,
-    model: ?Model.TokenBuffer = null,
+    payload_type: ?model.TokenBuffer = null,
+    model: ?model.TokenBuffer = null,
     last_usage: ?RawUsage = null,
     total_usage: ?RawUsage = null,
 
@@ -68,7 +68,7 @@ fn parseSessionFile(
     file_path: []const u8,
     deduper: ?*SessionProvider.MessageDeduper,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     _ = deduper;
     try parseCodexSessionFile(allocator, ctx, session_id, file_path, timezone_offset_minutes, events);
@@ -80,7 +80,7 @@ fn parseCodexSessionFile(
     session_id: []const u8,
     file_path: []const u8,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     var previous_totals: ?RawUsage = null;
     var model_state = ModelState{};
@@ -300,7 +300,7 @@ fn parseUsageObject(
 
     _ = try scanner.next();
 
-    var accumulator = Model.UsageAccumulator{};
+    var accumulator = model.UsageAccumulator{};
 
     while (true) {
         const key_token = try scanner.nextAlloc(allocator, .alloc_if_needed);
@@ -327,9 +327,9 @@ fn parseUsageField(
     allocator: std.mem.Allocator,
     scanner: *std.json.Scanner,
     key: []const u8,
-    accumulator: *Model.UsageAccumulator,
+    accumulator: *model.UsageAccumulator,
 ) ParserError!void {
-    const field = Model.usageFieldForKey(key) orelse {
+    const field = model.usageFieldForKey(key) orelse {
         try scanner.skipValue();
         return;
     };
@@ -433,7 +433,7 @@ const CodexLineHandler = struct {
     allocator: std.mem.Allocator,
     scanner: *std.json.Scanner,
     session_id: []const u8,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
     previous_totals: *?RawUsage,
     model_state: *ModelState,
     timezone_offset_minutes: i32,
@@ -459,7 +459,7 @@ fn processSessionLine(
     scanner: *std.json.Scanner,
     session_id: []const u8,
     line: []const u8,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
     previous_totals: *?RawUsage,
     model_state: *ModelState,
     timezone_offset_minutes: i32,
@@ -476,7 +476,7 @@ fn processSessionLine(
 
     var payload_result = PayloadResult{};
     defer payload_result.deinit(allocator);
-    var timestamp_token: ?Model.TokenBuffer = null;
+    var timestamp_token: ?model.TokenBuffer = null;
     defer if (timestamp_token) |*tok| tok.release(allocator);
     var is_turn_context = false;
     var is_event_msg = false;
@@ -491,7 +491,7 @@ fn processSessionLine(
         switch (key_token) {
             .object_end => break,
             .string => |slice| {
-                var key = Model.TokenBuffer{ .slice = slice, .owned = null };
+                var key = model.TokenBuffer{ .slice = slice, .owned = null };
                 defer key.release(allocator);
                 parseObjectField(
                     allocator,
@@ -506,7 +506,7 @@ fn processSessionLine(
                 };
             },
             .allocated_string => |buf| {
-                var key = Model.TokenBuffer{ .slice = buf, .owned = buf };
+                var key = model.TokenBuffer{ .slice = buf, .owned = buf };
                 defer key.release(allocator);
                 parseObjectField(
                     allocator,
@@ -567,11 +567,11 @@ fn processSessionLine(
         return;
     };
 
-    var delta_usage: ?Model.TokenUsage = null;
+    var delta_usage: ?model.TokenUsage = null;
     if (payload_result.last_usage) |last_usage| {
-        delta_usage = Model.TokenUsage.fromRaw(last_usage);
+        delta_usage = model.TokenUsage.fromRaw(last_usage);
     } else if (payload_result.total_usage) |total_usage| {
-        delta_usage = Model.TokenUsage.deltaFrom(total_usage, previous_totals.*);
+        delta_usage = model.TokenUsage.deltaFrom(total_usage, previous_totals.*);
     }
     if (payload_result.total_usage) |total_usage| {
         previous_totals.* = total_usage;
@@ -597,7 +597,7 @@ fn processSessionLine(
 
     const resolved = SessionProvider.resolveModel(ctx, model_state, extracted_model) orelse return;
 
-    const event = Model.TokenUsageEvent{
+    const event = model.TokenUsageEvent{
         .session_id = session_id,
         .timestamp = timestamp_copy,
         .local_iso_date = iso_date,
@@ -662,7 +662,7 @@ fn parseU64Value(scanner: *std.json.Scanner, allocator: std.mem.Allocator) Parse
         .number => {
             var number = try readNumberToken(scanner, allocator);
             defer number.release(allocator);
-            return Model.parseTokenNumber(number.slice);
+            return model.parseTokenNumber(number.slice);
         },
         else => return ParseError.UnexpectedToken,
     }
@@ -674,7 +674,7 @@ test "codex parser emits usage events from token_count entries" {
     defer arena_state.deinit();
     const worker_allocator = arena_state.allocator();
 
-    var events = std.ArrayList(Model.TokenUsageEvent){};
+    var events = std.ArrayList(model.TokenUsageEvent){};
     defer events.deinit(worker_allocator);
 
     const ctx = SessionProvider.ParseContext{

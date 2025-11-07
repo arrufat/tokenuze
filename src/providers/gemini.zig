@@ -1,9 +1,9 @@
 const std = @import("std");
-const Model = @import("../model.zig");
+const model = @import("../model.zig");
 const timeutil = @import("../time.zig");
 const SessionProvider = @import("session_provider.zig");
 
-const RawUsage = Model.RawTokenUsage;
+const RawUsage = model.RawTokenUsage;
 const ModelState = SessionProvider.ModelState;
 
 const fallback_pricing = [_]SessionProvider.FallbackPricingEntry{
@@ -53,7 +53,7 @@ fn parseSessionFile(
     file_path: []const u8,
     deduper: ?*SessionProvider.MessageDeduper,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     _ = deduper;
     try parseGeminiSessionFile(allocator, ctx, session_id, file_path, timezone_offset_minutes, events);
@@ -65,7 +65,7 @@ fn parseGeminiSessionFile(
     session_id: []const u8,
     file_path: []const u8,
     timezone_offset_minutes: i32,
-    events: *std.ArrayList(Model.TokenUsageEvent),
+    events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     const max_session_size: usize = 32 * 1024 * 1024;
     const file_data = std.fs.cwd().readFileAlloc(file_path, allocator, std.Io.Limit.limited(max_session_size)) catch |err| {
@@ -140,7 +140,7 @@ fn parseGeminiSessionFile(
                 }
 
                 const current_raw = parseGeminiUsage(tokens_obj);
-                var delta = Model.TokenUsage.deltaFrom(current_raw, previous_totals);
+                var delta = model.TokenUsage.deltaFrom(current_raw, previous_totals);
                 ctx.normalizeUsageDelta(&delta);
                 previous_totals = current_raw;
 
@@ -150,7 +150,7 @@ fn parseGeminiSessionFile(
 
                 const resolved_model = SessionProvider.resolveModel(ctx, &model_state, null) orelse continue;
 
-                const event = Model.TokenUsageEvent{
+                const event = model.TokenUsageEvent{
                     .session_id = session_label,
                     .timestamp = timestamp_copy,
                     .local_iso_date = iso_date,
@@ -182,7 +182,7 @@ test "gemini parser converts message totals into usage deltas" {
     defer arena_state.deinit();
     const worker_allocator = arena_state.allocator();
 
-    var events: std.ArrayList(Model.TokenUsageEvent) = .empty;
+    var events: std.ArrayList(model.TokenUsageEvent) = .empty;
     defer events.deinit(worker_allocator);
 
     const ctx = SessionProvider.ParseContext{
