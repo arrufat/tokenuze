@@ -1,12 +1,12 @@
 const std = @import("std");
 const model = @import("../model.zig");
 const timeutil = @import("../time.zig");
-const SessionProvider = @import("session_provider.zig");
+const provider = @import("provider.zig");
 
 const RawUsage = model.RawTokenUsage;
-const ModelState = SessionProvider.ModelState;
+const ModelState = provider.ModelState;
 
-const GEMINI_USAGE_FIELDS = [_]SessionProvider.UsageFieldDescriptor{
+const GEMINI_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
     .{ .key = "input", .field = .input_tokens },
     .{ .key = "cached", .field = .cached_input_tokens },
     .{ .key = "output", .field = .output_tokens },
@@ -15,7 +15,7 @@ const GEMINI_USAGE_FIELDS = [_]SessionProvider.UsageFieldDescriptor{
     .{ .key = "total", .field = .total_tokens },
 };
 
-const fallback_pricing = [_]SessionProvider.FallbackPricingEntry{
+const fallback_pricing = [_]provider.FallbackPricingEntry{
     .{ .name = "gemini-2.5-pro", .pricing = .{
         .input_cost_per_m = 1.25,
         .cache_creation_cost_per_m = 1.25,
@@ -42,7 +42,7 @@ const fallback_pricing = [_]SessionProvider.FallbackPricingEntry{
     } },
 };
 
-const ProviderExports = SessionProvider.makeProvider(.{
+const ProviderExports = provider.makeProvider(.{
     .name = "gemini",
     .sessions_dir_suffix = "/.gemini/tmp",
     .legacy_fallback_model = null,
@@ -57,10 +57,10 @@ pub const loadPricingData = ProviderExports.loadPricingData;
 
 fn parseSessionFile(
     allocator: std.mem.Allocator,
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     session_id: []const u8,
     file_path: []const u8,
-    deduper: ?*SessionProvider.MessageDeduper,
+    deduper: ?*provider.MessageDeduper,
     timezone_offset_minutes: i32,
     events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
@@ -70,7 +70,7 @@ fn parseSessionFile(
 
 fn parseGeminiSessionFile(
     allocator: std.mem.Allocator,
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     session_id: []const u8,
     file_path: []const u8,
     timezone_offset_minutes: i32,
@@ -99,7 +99,7 @@ fn parseGeminiSessionFile(
     if (session_obj.get("sessionId")) |sid_value| {
         switch (sid_value) {
             .string => |slice| {
-                if (try SessionProvider.duplicateNonEmpty(allocator, slice)) |dup| {
+                if (try provider.duplicateNonEmpty(allocator, slice)) |dup| {
                     session_label = dup;
                 }
             },
@@ -131,7 +131,7 @@ fn parseGeminiSessionFile(
                     .string => |slice| slice,
                     else => continue,
                 };
-                const timestamp_copy = try SessionProvider.duplicateNonEmpty(allocator, timestamp_slice) orelse continue;
+                const timestamp_copy = try provider.duplicateNonEmpty(allocator, timestamp_slice) orelse continue;
                 const iso_date = timeutil.isoDateForTimezone(timestamp_copy, timezone_offset_minutes) catch {
                     continue;
                 };
@@ -167,7 +167,7 @@ fn parseGeminiSessionFile(
 }
 
 fn parseGeminiUsage(tokens_obj: std.json.ObjectMap) RawUsage {
-    return SessionProvider.parseUsageObject(tokens_obj, GEMINI_USAGE_FIELDS[0..]);
+    return provider.parseUsageObject(tokens_obj, GEMINI_USAGE_FIELDS[0..]);
 }
 
 test "gemini parser converts message totals into usage deltas" {
@@ -179,7 +179,7 @@ test "gemini parser converts message totals into usage deltas" {
     var events: std.ArrayList(model.TokenUsageEvent) = .empty;
     defer events.deinit(worker_allocator);
 
-    const ctx = SessionProvider.ParseContext{
+    const ctx = provider.ParseContext{
         .provider_name = "gemini-test",
         .legacy_fallback_model = null,
         .cached_counts_overlap_input = false,

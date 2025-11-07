@@ -3,7 +3,7 @@ const Model = @import("model.zig");
 const claude = @import("providers/claude.zig");
 const codex = @import("providers/codex.zig");
 const gemini = @import("providers/gemini.zig");
-const session_provider = @import("providers/session_provider.zig");
+const provider = @import("providers/provider.zig");
 const render = @import("render.zig");
 const io_util = @import("io_util.zig");
 const timeutil = @import("time.zig");
@@ -97,8 +97,8 @@ pub const UploadReport = struct {
 
 fn initProviderNames() [providers.len][]const u8 {
     var names: [providers.len][]const u8 = undefined;
-    inline for (providers, 0..) |provider, idx| {
-        names[idx] = provider.name;
+    inline for (providers, 0..) |prov, idx| {
+        names[idx] = prov.name;
     }
     return names;
 }
@@ -109,11 +109,11 @@ pub fn providerNames() []const []const u8 {
 
 fn initProviderListDescription() []const u8 {
     comptime var combined: []const u8 = "";
-    inline for (providers, 0..) |provider, idx| {
+    inline for (providers, 0..) |prov, idx| {
         if (idx == 0) {
-            combined = provider.name;
+            combined = prov.name;
         } else {
-            combined = std.fmt.comptimePrint("{s}, {s}", .{ combined, provider.name });
+            combined = std.fmt.comptimePrint("{s}, {s}", .{ combined, prov.name });
         }
     }
     return combined;
@@ -157,8 +157,8 @@ pub const ProviderSelection = struct {
 };
 
 pub fn findProviderIndex(name: []const u8) ?usize {
-    for (providers, 0..) |provider, idx| {
-        if (std.mem.eql(u8, provider.name, name)) return idx;
+    for (providers, 0..) |prov, idx| {
+        if (std.mem.eql(u8, prov.name, name)) return idx;
     }
     return null;
 }
@@ -287,13 +287,13 @@ fn collectSummaryInternal(
         try loadPricing(allocator, temp_allocator, selection, &pricing_map, progress_parent);
     }
 
-    for (providers, 0..) |provider, idx| {
+    for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
         const before_events = summary_builder.eventCount();
         const stats = blk: {
-            var collect_phase = try PhaseTracker.start(progress_parent, provider.phase_label, 0);
+            var collect_phase = try PhaseTracker.start(progress_parent, prov.phase_label, 0);
             defer collect_phase.finish();
-            try provider.collect(allocator, temp_allocator, &summary_builder, filters, &pricing_map, collect_phase.progress());
+            try prov.collect(allocator, temp_allocator, &summary_builder, filters, &pricing_map, collect_phase.progress());
             break :blk .{
                 .elapsed = collect_phase.elapsedMs(),
                 .events_added = summary_builder.eventCount() - before_events,
@@ -303,7 +303,7 @@ fn collectSummaryInternal(
         std.log.info(
             "phase.{s} completed in {d:.2}ms (events += {d}, total_events={d})",
             .{
-                provider.phase_label,
+                prov.phase_label,
                 stats.elapsed,
                 stats.events_added,
                 stats.total_events,
@@ -379,7 +379,7 @@ fn loadPricing(
     defer pricing_phase.finish();
 
     const before_models = pricing.count();
-    const remote_stats = try session_provider.loadRemotePricing(allocator, temp_allocator, pricing);
+    const remote_stats = try provider.loadRemotePricing(allocator, temp_allocator, pricing);
     if (remote_stats.attempted) {
         if (remote_stats.failure) |err| {
             std.log.warn(
@@ -397,9 +397,9 @@ fn loadPricing(
     }
 
     var fallback_timer = try std.time.Timer.start();
-    for (providers, 0..) |provider, idx| {
+    for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
-        try provider.load_pricing(allocator, temp_allocator, pricing);
+        try prov.load_pricing(allocator, temp_allocator, pricing);
     }
     const fallback_elapsed = nsToMs(fallback_timer.read());
     const fallback_added = pricing.count() - (before_models + remote_stats.models_added);

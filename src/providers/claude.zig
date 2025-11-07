@@ -1,13 +1,13 @@
 const std = @import("std");
 const model = @import("../model.zig");
 const timeutil = @import("../time.zig");
-const SessionProvider = @import("session_provider.zig");
+const provider = @import("provider.zig");
 
 const RawUsage = model.RawTokenUsage;
-const MessageDeduper = SessionProvider.MessageDeduper;
-const ModelState = SessionProvider.ModelState;
+const MessageDeduper = provider.MessageDeduper;
+const ModelState = provider.ModelState;
 
-const CLAUDE_USAGE_FIELDS = [_]SessionProvider.UsageFieldDescriptor{
+const CLAUDE_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
     .{ .key = "input_tokens", .field = .input_tokens },
     .{ .key = "cache_creation_input_tokens", .field = .cache_creation_input_tokens },
     .{ .key = "cache_read_input_tokens", .field = .cached_input_tokens },
@@ -18,7 +18,7 @@ const CLAUDE_USAGE_FIELDS = [_]SessionProvider.UsageFieldDescriptor{
     .{ .key = "output_tokens", .field = .total_tokens, .mode = .add },
 };
 
-const ProviderExports = SessionProvider.makeProvider(.{
+const ProviderExports = provider.makeProvider(.{
     .name = "claude",
     .sessions_dir_suffix = "/.claude/projects",
     .legacy_fallback_model = null,
@@ -34,10 +34,10 @@ pub const loadPricingData = ProviderExports.loadPricingData;
 
 fn parseSessionFile(
     allocator: std.mem.Allocator,
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     session_id: []const u8,
     file_path: []const u8,
-    deduper: ?*SessionProvider.MessageDeduper,
+    deduper: ?*provider.MessageDeduper,
     timezone_offset_minutes: i32,
     events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
@@ -46,7 +46,7 @@ fn parseSessionFile(
 
 fn parseClaudeSessionFile(
     allocator: std.mem.Allocator,
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     session_id: []const u8,
     file_path: []const u8,
     deduper: ?*MessageDeduper,
@@ -69,7 +69,7 @@ fn parseClaudeSessionFile(
         .model_state = &model_state,
     };
 
-    try SessionProvider.streamJsonLines(
+    try provider.streamJsonLines(
         allocator,
         ctx,
         file_path,
@@ -85,7 +85,7 @@ fn parseClaudeSessionFile(
 }
 
 const ClaudeLineHandler = struct {
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     allocator: std.mem.Allocator,
     file_path: []const u8,
     deduper: ?*MessageDeduper,
@@ -113,7 +113,7 @@ const ClaudeLineHandler = struct {
 };
 
 fn handleClaudeLine(
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     allocator: std.mem.Allocator,
     line: []const u8,
     line_index: usize,
@@ -143,7 +143,7 @@ fn handleClaudeLine(
         if (record.get("sessionId")) |sid_value| {
             switch (sid_value) {
                 .string => |slice| {
-                    const duplicate = SessionProvider.duplicateNonEmpty(allocator, slice) catch null;
+                    const duplicate = provider.duplicateNonEmpty(allocator, slice) catch null;
                     if (duplicate) |dup| {
                         session_label.* = dup;
                         session_label_overridden.* = true;
@@ -167,7 +167,7 @@ fn handleClaudeLine(
 }
 
 fn emitClaudeEvent(
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     allocator: std.mem.Allocator,
     record: std.json.ObjectMap,
     deduper: ?*MessageDeduper,
@@ -204,7 +204,7 @@ fn emitClaudeEvent(
         .string => |slice| slice,
         else => return,
     };
-    const timestamp_copy = SessionProvider.duplicateNonEmpty(allocator, timestamp_slice) catch return;
+    const timestamp_copy = provider.duplicateNonEmpty(allocator, timestamp_slice) catch return;
     const owned_timestamp = timestamp_copy orelse return;
     const iso_date = timeutil.isoDateForTimezone(owned_timestamp, timezone_offset_minutes) catch {
         return;
@@ -253,7 +253,7 @@ fn shouldEmitClaudeMessage(
 }
 
 fn parseClaudeUsage(usage_obj: std.json.ObjectMap) RawUsage {
-    return SessionProvider.parseUsageObject(usage_obj, CLAUDE_USAGE_FIELDS[0..]);
+    return provider.parseUsageObject(usage_obj, CLAUDE_USAGE_FIELDS[0..]);
 }
 
 test "claude parser emits assistant usage events and respects overrides" {
@@ -268,7 +268,7 @@ test "claude parser emits assistant usage events and respects overrides" {
     var deduper = try MessageDeduper.init(worker_allocator);
     defer deduper.deinit();
 
-    const ctx = SessionProvider.ParseContext{
+    const ctx = provider.ParseContext{
         .provider_name = "claude-test",
         .legacy_fallback_model = null,
         .cached_counts_overlap_input = false,

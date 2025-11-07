@@ -1,11 +1,11 @@
 const std = @import("std");
 const model = @import("../model.zig");
 const timeutil = @import("../time.zig");
-const SessionProvider = @import("session_provider.zig");
+const provider = @import("provider.zig");
 
 const RawUsage = model.RawTokenUsage;
 const TokenString = model.TokenBuffer;
-const ModelState = SessionProvider.ModelState;
+const ModelState = provider.ModelState;
 
 const PayloadResult = struct {
     payload_type: ?model.TokenBuffer = null,
@@ -32,7 +32,7 @@ const ScannerPeekError = std.json.Scanner.PeekError;
 
 const ParserError = ParseError || ScannerAllocError || ScannerSkipError || ScannerNextError || ScannerPeekError;
 
-const fallback_pricing = [_]SessionProvider.FallbackPricingEntry{
+const fallback_pricing = [_]provider.FallbackPricingEntry{
     .{ .name = "gpt-5", .pricing = .{
         .input_cost_per_m = 1.25,
         .cache_creation_cost_per_m = 1.25,
@@ -47,7 +47,7 @@ const fallback_pricing = [_]SessionProvider.FallbackPricingEntry{
     } },
 };
 
-const ProviderExports = SessionProvider.makeProvider(.{
+const ProviderExports = provider.makeProvider(.{
     .name = "codex",
     .sessions_dir_suffix = "/.codex/sessions",
     .legacy_fallback_model = "gpt-5",
@@ -63,10 +63,10 @@ pub const EventConsumer = ProviderExports.EventConsumer;
 
 fn parseSessionFile(
     allocator: std.mem.Allocator,
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     session_id: []const u8,
     file_path: []const u8,
-    deduper: ?*SessionProvider.MessageDeduper,
+    deduper: ?*provider.MessageDeduper,
     timezone_offset_minutes: i32,
     events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
@@ -76,7 +76,7 @@ fn parseSessionFile(
 
 fn parseCodexSessionFile(
     allocator: std.mem.Allocator,
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     session_id: []const u8,
     file_path: []const u8,
     timezone_offset_minutes: i32,
@@ -99,7 +99,7 @@ fn parseCodexSessionFile(
         .timezone_offset_minutes = timezone_offset_minutes,
     };
 
-    try SessionProvider.streamJsonLines(
+    try provider.streamJsonLines(
         allocator,
         ctx,
         file_path,
@@ -429,7 +429,7 @@ fn resetScanner(scanner: *std.json.Scanner, input: []const u8) void {
 }
 
 const CodexLineHandler = struct {
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     allocator: std.mem.Allocator,
     scanner: *std.json.Scanner,
     session_id: []const u8,
@@ -454,7 +454,7 @@ const CodexLineHandler = struct {
 };
 
 fn processSessionLine(
-    ctx: *const SessionProvider.ParseContext,
+    ctx: *const provider.ParseContext,
     allocator: std.mem.Allocator,
     scanner: *std.json.Scanner,
     session_id: []const u8,
@@ -552,7 +552,7 @@ fn processSessionLine(
 
     var raw_timestamp = timestamp_token.?;
     timestamp_token = null;
-    const timestamp_copy = try SessionProvider.duplicateNonEmpty(allocator, raw_timestamp.slice) orelse {
+    const timestamp_copy = try provider.duplicateNonEmpty(allocator, raw_timestamp.slice) orelse {
         raw_timestamp.release(allocator);
         return;
     };
@@ -667,7 +667,7 @@ test "codex parser emits usage events from token_count entries" {
     var events = std.ArrayList(model.TokenUsageEvent){};
     defer events.deinit(worker_allocator);
 
-    const ctx = SessionProvider.ParseContext{
+    const ctx = provider.ParseContext{
         .provider_name = "codex-test",
         .legacy_fallback_model = "gpt-5",
         .cached_counts_overlap_input = true,
