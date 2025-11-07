@@ -167,6 +167,7 @@ test "gemini parser converts message totals into usage deltas" {
         &ctx,
         "gemini-fixture",
         "fixtures/gemini/basic.json",
+        null,
         0,
         &events,
     );

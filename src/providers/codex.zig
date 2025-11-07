@@ -638,6 +638,7 @@ test "codex parser emits usage events from token_count entries" {
         &ctx,
         "codex-fixture",
         "fixtures/codex/basic.jsonl",
+        null,
         0,
         &events,
     );

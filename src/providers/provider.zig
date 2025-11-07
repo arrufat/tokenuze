@@ -1082,7 +1082,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const allocator = std.testing.allocator;
             const tmp_path = "tokenuze-json-test.json";
             defer std.fs.cwd().deleteFile(tmp_path) catch {};
-            try std.fs.cwd().writeFile(tmp_path, "{ \"ok\": true }");
+            try std.fs.cwd().writeFile(.{
+                .sub_path = tmp_path,
+                .data = "{ \"ok\": true }",
+            });
 
             const ctx = ParseContext{
                 .provider_name = "test",
