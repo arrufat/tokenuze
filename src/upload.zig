@@ -2,6 +2,7 @@ const std = @import("std");
 const machine_id = @import("machine_id.zig");
 const io_util = @import("io_util.zig");
 const timeutil = @import("time.zig");
+const identity = @import("identity.zig");
 
 pub const ProviderUpload = struct {
     name: []const u8,
@@ -276,10 +277,10 @@ fn buildUploadPayload(
     const timestamp = try timeutil.currentTimestampIso8601(allocator);
     defer allocator.free(timestamp);
 
-    const hostname = try resolveHostname(allocator);
+    const hostname = try identity.getHostname(allocator);
     defer allocator.free(hostname);
 
-    const username = try resolveUsername(allocator);
+    const username = try identity.getUsername(allocator);
     defer allocator.free(username);
 
     const display_name = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ username, hostname });
@@ -389,50 +390,6 @@ const RawJson = struct {
         jw.endWriteRaw();
     }
 };
-
-fn resolveHostname(allocator: std.mem.Allocator) ![]u8 {
-    if (std.process.getEnvVarOwned(allocator, "HOSTNAME")) |value| {
-        return value;
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
-    }
-
-    if (std.process.getEnvVarOwned(allocator, "COMPUTERNAME")) |value| {
-        return value;
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
-    }
-
-    if (@import("builtin").target.os.tag == .windows) {
-        return allocator.dupe(u8, "unknown-host");
-    } else {
-        var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
-        const host = std.posix.gethostname(&buf) catch {
-            return allocator.dupe(u8, "unknown-host");
-        };
-        return allocator.dupe(u8, host);
-    }
-}
-
-fn resolveUsername(allocator: std.mem.Allocator) ![]u8 {
-    if (std.process.getEnvVarOwned(allocator, "USER")) |value| {
-        return value;
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
-    }
-
-    if (std.process.getEnvVarOwned(allocator, "USERNAME")) |value| {
-        return value;
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
-    }
-
-    return allocator.dupe(u8, "unknown");
-}
 
 fn daysFromCivil(year: i32, month_u8: u8, day_u8: u8) i64 {
     const m = @as(i32, month_u8);
