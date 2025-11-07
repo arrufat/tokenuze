@@ -18,13 +18,13 @@ pub fn getHostname(allocator: std.mem.Allocator) ![]u8 {
 
     if (builtin.target.os.tag == .windows) {
         return allocator.dupe(u8, "unknown-host");
+    } else {
+        var buf: [hostnameBufferLen()]u8 = undefined;
+        const name = std.posix.gethostname(&buf) catch {
+            return allocator.dupe(u8, "unknown-host");
+        };
+        return allocator.dupe(u8, name);
     }
-
-    var buf: [hostnameBufferLen()]u8 = undefined;
-    const name = std.posix.gethostname(&buf) catch {
-        return allocator.dupe(u8, "unknown-host");
-    };
-    return allocator.dupe(u8, name);
 }
 
 pub fn getUsername(allocator: std.mem.Allocator) ![]u8 {
