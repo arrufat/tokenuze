@@ -120,7 +120,7 @@ const PricingFeedParser = struct {
                     }
                 },
                 .string => {
-                    var name = try readReaderStringToken(self.temp_allocator, reader);
+                    var name = try JsonTokenSlice.fromString(self.temp_allocator, reader);
                     defer name.deinit(self.temp_allocator);
                     const maybe_pricing = try self.parseEntry(self.temp_allocator, reader);
                     if (maybe_pricing) |entry| {
@@ -155,7 +155,7 @@ const PricingFeedParser = struct {
                     break;
                 },
                 .string => {
-                    var field = try readReaderStringToken(scratch_allocator, reader);
+                    var field = try JsonTokenSlice.fromString(scratch_allocator, reader);
                     defer field.deinit(scratch_allocator);
                     if (std.mem.eql(u8, field.view(), "input_cost_per_token")) {
                         input_rate = try readNumberValue(scratch_allocator, reader);
@@ -237,45 +237,45 @@ const PricingFeedParser = struct {
 
 /// Token returned by `std.json.Reader.nextAlloc`, remembering whether storage
 /// was borrowed from the reader buffer or newly allocated.
-const ReaderTokenSlice = union(enum) {
+const JsonTokenSlice = union(enum) {
     borrowed: []const u8,
     owned: []u8,
 
-    fn view(self: ReaderTokenSlice) []const u8 {
+    fn view(self: JsonTokenSlice) []const u8 {
         return switch (self) {
             .borrowed, .owned => |val| val,
         };
     }
 
-    fn deinit(self: *ReaderTokenSlice, allocator: std.mem.Allocator) void {
+    fn deinit(self: *JsonTokenSlice, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .borrowed => {},
             .owned => |buf| allocator.free(buf),
         }
-        self.* = ReaderTokenSlice{ .borrowed = &.{} };
+        self.* = JsonTokenSlice{ .borrowed = &.{} };
+    }
+
+    fn fromString(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
+        const token = try reader.nextAlloc(allocator, .alloc_if_needed);
+        return switch (token) {
+            .string => |slice| .{ .borrowed = slice },
+            .allocated_string => |buf| .{ .owned = buf },
+            else => error.UnexpectedToken,
+        };
+    }
+
+    fn fromNumber(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
+        const token = try reader.nextAlloc(allocator, .alloc_if_needed);
+        return switch (token) {
+            .number => |slice| .{ .borrowed = slice },
+            .allocated_number => |buf| .{ .owned = buf },
+            else => error.UnexpectedToken,
+        };
     }
 };
 
-fn readReaderStringToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !ReaderTokenSlice {
-    const token = try reader.nextAlloc(allocator, .alloc_if_needed);
-    return switch (token) {
-        .string => |slice| .{ .borrowed = slice },
-        .allocated_string => |buf| .{ .owned = buf },
-        else => error.UnexpectedToken,
-    };
-}
-
-fn readReaderNumberSlice(allocator: std.mem.Allocator, reader: *std.json.Reader) !ReaderTokenSlice {
-    const token = try reader.nextAlloc(allocator, .alloc_if_needed);
-    return switch (token) {
-        .number => |slice| .{ .borrowed = slice },
-        .allocated_number => |buf| .{ .owned = buf },
-        else => error.UnexpectedToken,
-    };
-}
-
 fn readNumberValue(allocator: std.mem.Allocator, reader: *std.json.Reader) !f64 {
-    var buffered = try readReaderNumberSlice(allocator, reader);
+    var buffered = try JsonTokenSlice.fromNumber(allocator, reader);
     defer buffered.deinit(allocator);
     return std.fmt.parseFloat(f64, buffered.view()) catch return error.InvalidNumber;
 }
