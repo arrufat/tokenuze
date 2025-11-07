@@ -48,13 +48,13 @@ const ProviderExports = provider.makeProvider(.{
     .fallback_pricing = fallback_pricing[0..],
     .session_file_ext = ".json",
     .cached_counts_overlap_input = false,
-    .parse_session_fn = parseSessionFile,
+    .parse_session_fn = parseGeminiSessionFile,
 });
 
 pub const collect = ProviderExports.collect;
 pub const loadPricingData = ProviderExports.loadPricingData;
 
-fn parseSessionFile(
+fn parseGeminiSessionFile(
     allocator: std.mem.Allocator,
     ctx: *const provider.ParseContext,
     session_id: []const u8,
@@ -64,17 +64,6 @@ fn parseSessionFile(
     events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
     _ = deduper;
-    try parseGeminiSessionFile(allocator, ctx, session_id, file_path, timezone_offset_minutes, events);
-}
-
-fn parseGeminiSessionFile(
-    allocator: std.mem.Allocator,
-    ctx: *const provider.ParseContext,
-    session_id: []const u8,
-    file_path: []const u8,
-    timezone_offset_minutes: i32,
-    events: *std.ArrayList(model.TokenUsageEvent),
-) !void {
     const parsed_opt = provider.readJsonValue(
         allocator,
         ctx,
