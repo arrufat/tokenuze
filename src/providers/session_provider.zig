@@ -105,10 +105,6 @@ const PricingFeedParser = struct {
     pricing: *Model.PricingMap,
 
     pub fn parse(self: *PricingFeedParser, reader: *std.json.Reader) !void {
-        var key_buffer: std.ArrayList(u8) = .empty;
-        defer key_buffer.deinit(self.temp_allocator);
-        var scratch: std.ArrayList(u8) = .empty;
-        defer scratch.deinit(self.temp_allocator);
         var alias_buffer: std.ArrayList(u8) = .empty;
         defer alias_buffer.deinit(self.temp_allocator);
 
@@ -124,12 +120,12 @@ const PricingFeedParser = struct {
                     }
                 },
                 .string => {
-                    const name_slice = try readStringValue(self.temp_allocator, reader, &key_buffer);
-                    const maybe_pricing = try self.parseEntry(self.temp_allocator, reader, &scratch);
+                    var name = try readReaderStringToken(self.temp_allocator, reader);
+                    defer name.release(self.temp_allocator);
+                    const maybe_pricing = try self.parseEntry(self.temp_allocator, reader);
                     if (maybe_pricing) |entry| {
-                        try self.insertPricingEntries(name_slice, entry, &alias_buffer);
+                        try self.insertPricingEntries(name.slice, entry, &alias_buffer);
                     }
-                    key_buffer.clearRetainingCapacity();
                 },
                 else => return error.InvalidResponse,
             }
@@ -140,7 +136,6 @@ const PricingFeedParser = struct {
         self: *PricingFeedParser,
         scratch_allocator: std.mem.Allocator,
         reader: *std.json.Reader,
-        scratch: *std.ArrayList(u8),
     ) !?Model.ModelPricing {
         _ = self;
         if ((try reader.next()) != .object_begin) {
@@ -160,15 +155,16 @@ const PricingFeedParser = struct {
                     break;
                 },
                 .string => {
-                    const field = try readStringValue(scratch_allocator, reader, scratch);
-                    if (std.mem.eql(u8, field, "input_cost_per_token")) {
-                        input_rate = try readNumber(scratch_allocator, reader, scratch);
-                    } else if (std.mem.eql(u8, field, "output_cost_per_token")) {
-                        output_rate = try readNumber(scratch_allocator, reader, scratch);
-                    } else if (std.mem.eql(u8, field, "cache_creation_input_token_cost")) {
-                        cache_creation_rate = try readNumber(scratch_allocator, reader, scratch);
-                    } else if (std.mem.eql(u8, field, "cache_read_input_token_cost")) {
-                        cached_rate = try readNumber(scratch_allocator, reader, scratch);
+                    var field = try readReaderStringToken(scratch_allocator, reader);
+                    defer field.release(scratch_allocator);
+                    if (std.mem.eql(u8, field.slice, "input_cost_per_token")) {
+                        input_rate = try readNumberValue(scratch_allocator, reader);
+                    } else if (std.mem.eql(u8, field.slice, "output_cost_per_token")) {
+                        output_rate = try readNumberValue(scratch_allocator, reader);
+                    } else if (std.mem.eql(u8, field.slice, "cache_creation_input_token_cost")) {
+                        cache_creation_rate = try readNumberValue(scratch_allocator, reader);
+                    } else if (std.mem.eql(u8, field.slice, "cache_read_input_token_cost")) {
+                        cached_rate = try readNumberValue(scratch_allocator, reader);
                     } else {
                         try reader.skipValue();
                     }
@@ -218,10 +214,7 @@ const PricingFeedParser = struct {
         if (!looksLikeDateSuffix(suffix)) return;
 
         alias_buffer.clearRetainingCapacity();
-        try alias_buffer.ensureTotalCapacity(self.temp_allocator, name.len);
-        try alias_buffer.appendSlice(self.temp_allocator, name[0..at_idx]);
-        try alias_buffer.append(self.temp_allocator, '-');
-        try alias_buffer.appendSlice(self.temp_allocator, suffix);
+        try alias_buffer.print(self.temp_allocator, "{s}-{s}", .{ name[0..at_idx], suffix });
 
         try self.putPricing(alias_buffer.items, entry);
     }
@@ -242,31 +235,39 @@ const PricingFeedParser = struct {
     }
 };
 
-fn readStringValue(
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    buffer: *std.ArrayList(u8),
-) ![]const u8 {
-    var managed = buffer.toManaged(allocator);
-    defer buffer.* = managed.moveToUnmanaged();
+const BufferedSlice = struct {
+    slice: []const u8,
+    owned: ?[]u8 = null,
 
-    managed.clearRetainingCapacity();
-    const slice = try reader.allocNextIntoArrayList(&managed, .alloc_if_needed);
-    return slice orelse managed.items;
+    fn release(self: *BufferedSlice, allocator: std.mem.Allocator) void {
+        if (self.owned) |buf| allocator.free(buf);
+        self.slice = &.{};
+        self.owned = null;
+    }
+};
+
+fn readReaderStringToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !BufferedSlice {
+    const token = try reader.nextAlloc(allocator, .alloc_if_needed);
+    return switch (token) {
+        .string => |slice| .{ .slice = slice },
+        .allocated_string => |buf| .{ .slice = buf, .owned = buf },
+        else => error.UnexpectedToken,
+    };
 }
 
-fn readNumber(
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    buffer: *std.ArrayList(u8),
-) !f64 {
-    var managed = buffer.toManaged(allocator);
-    defer buffer.* = managed.moveToUnmanaged();
+fn readReaderNumberSlice(allocator: std.mem.Allocator, reader: *std.json.Reader) !BufferedSlice {
+    const token = try reader.nextAlloc(allocator, .alloc_if_needed);
+    return switch (token) {
+        .number => |slice| .{ .slice = slice },
+        .allocated_number => |buf| .{ .slice = buf, .owned = buf },
+        else => error.UnexpectedToken,
+    };
+}
 
-    managed.clearRetainingCapacity();
-    const slice = try reader.allocNextIntoArrayList(&managed, .alloc_if_needed);
-    const number_slice = slice orelse managed.items;
-    return std.fmt.parseFloat(f64, number_slice) catch return error.InvalidNumber;
+fn readNumberValue(allocator: std.mem.Allocator, reader: *std.json.Reader) !f64 {
+    var buffered = try readReaderNumberSlice(allocator, reader);
+    defer buffered.release(allocator);
+    return std.fmt.parseFloat(f64, buffered.slice) catch return error.InvalidNumber;
 }
 
 pub fn Provider(comptime cfg: ProviderConfig) type {
