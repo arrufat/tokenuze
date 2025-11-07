@@ -52,6 +52,9 @@ Missing pricing entries are listed under `missing_pricing`.
 
 ## Extending
 Provider integrations live in `src/providers/`. To add a new LLM vendor:
-1. Copy the `codex.zig` pattern into `src/providers/<vendor>.zig`.
-2. Implement a `collect` function that appends `Model.TokenUsageEvent` records.
-3. Expose any provider-specific pricing loader and register the provider in `src/root.zig`.
+1. Start with `SessionProvider.makeProvider` (see `claude.zig`/`gemini.zig`) to wire `collect`, pricing fallbacks, and JSONL streaming with minimal boilerplate.
+2. Implement a parser that emits `Model.TokenUsageEvent` rows; use the shared helpers where possible:
+   - `ParseContext.captureModel/requireModel` keep per-session model state consistent.
+   - `UsageFieldDescriptor` + `parseUsageObject` let you describe raw token counters declaratively instead of hand-writing math.
+3. Expose any provider-specific pricing loader and register the provider in `src/root.zig` so CLI option parsing recognizes it.
+4. Add fixtures under `fixtures/<provider>/` plus unit tests near the parser to lock in expected token deltas.
