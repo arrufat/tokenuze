@@ -150,7 +150,7 @@ pub fn printHelp() !void {
     }
 
     for (optionSpecs()) |spec| {
-        var desc_buf: [192]u8 = undefined;
+        var desc_buf: [256]u8 = undefined;
         const desc = optionDescription(&spec, tz_label, desc_buf[0..]);
         try printOptionLine(writer, &spec, desc, max_label);
     }
