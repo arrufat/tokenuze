@@ -438,164 +438,144 @@ const CodexLineHandler = struct {
     timezone_offset_minutes: i32,
 
     fn handle(self: *CodexLineHandler, line: []const u8, _: usize) !void {
-        try processSessionLine(
-            self.ctx,
-            self.allocator,
-            self.scanner,
-            self.session_id,
-            line,
-            self.events,
-            self.previous_totals,
-            self.model_state,
-            self.timezone_offset_minutes,
-        );
+        try self.processSessionLine(line);
     }
-};
 
-fn processSessionLine(
-    ctx: *const provider.ParseContext,
-    allocator: std.mem.Allocator,
-    scanner: *std.json.Scanner,
-    session_id: []const u8,
-    line: []const u8,
-    events: *std.ArrayList(model.TokenUsageEvent),
-    previous_totals: *?RawUsage,
-    model_state: *ModelState,
-    timezone_offset_minutes: i32,
-) !void {
-    const trimmed = std.mem.trim(u8, line, " \t\r\n");
-    if (trimmed.len == 0) return;
+    fn processSessionLine(self: *CodexLineHandler, line: []const u8) !void {
+        const trimmed = std.mem.trim(u8, line, " \t\r\n");
+        if (trimmed.len == 0) return;
 
-    resetScanner(scanner, trimmed);
+        resetScanner(self.scanner, trimmed);
 
-    const start_token = scanner.next() catch {
-        return;
-    };
-    if (start_token != .object_begin) return;
-
-    var payload_result = PayloadResult{};
-    defer payload_result.deinit(allocator);
-    var timestamp_token: ?model.TokenBuffer = null;
-    defer if (timestamp_token) |*tok| tok.release(allocator);
-    var is_turn_context = false;
-    var is_event_msg = false;
-    var parse_failed = false;
-
-    while (!parse_failed) {
-        const key_token = scanner.nextAlloc(allocator, .alloc_if_needed) catch {
-            parse_failed = true;
-            break;
+        const start_token = self.scanner.next() catch {
+            return;
         };
+        if (start_token != .object_begin) return;
 
-        switch (key_token) {
-            .object_end => break,
-            .string => |slice| {
-                var key = model.TokenBuffer{ .slice = slice, .owned = null };
-                defer key.release(allocator);
-                parseObjectField(
-                    allocator,
-                    scanner,
-                    key.slice,
-                    &payload_result,
-                    &timestamp_token,
-                    &is_turn_context,
-                    &is_event_msg,
-                ) catch {
-                    parse_failed = true;
-                };
-            },
-            .allocated_string => |buf| {
-                var key = model.TokenBuffer{ .slice = buf, .owned = buf };
-                defer key.release(allocator);
-                parseObjectField(
-                    allocator,
-                    scanner,
-                    key.slice,
-                    &payload_result,
-                    &timestamp_token,
-                    &is_turn_context,
-                    &is_event_msg,
-                ) catch {
-                    parse_failed = true;
-                };
-            },
-            else => {
+        var payload_result = PayloadResult{};
+        defer payload_result.deinit(self.allocator);
+        var timestamp_token: ?model.TokenBuffer = null;
+        defer if (timestamp_token) |*tok| tok.release(self.allocator);
+        var is_turn_context = false;
+        var is_event_msg = false;
+        var parse_failed = false;
+
+        while (!parse_failed) {
+            const key_token = self.scanner.nextAlloc(self.allocator, .alloc_if_needed) catch {
                 parse_failed = true;
-            },
+                break;
+            };
+
+            switch (key_token) {
+                .object_end => break,
+                .string => |slice| {
+                    var key = model.TokenBuffer{ .slice = slice, .owned = null };
+                    defer key.release(self.allocator);
+                    parseObjectField(
+                        self.allocator,
+                        self.scanner,
+                        key.slice,
+                        &payload_result,
+                        &timestamp_token,
+                        &is_turn_context,
+                        &is_event_msg,
+                    ) catch {
+                        parse_failed = true;
+                    };
+                },
+                .allocated_string => |buf| {
+                    var key = model.TokenBuffer{ .slice = buf, .owned = buf };
+                    defer key.release(self.allocator);
+                    parseObjectField(
+                        self.allocator,
+                        self.scanner,
+                        key.slice,
+                        &payload_result,
+                        &timestamp_token,
+                        &is_turn_context,
+                        &is_event_msg,
+                    ) catch {
+                        parse_failed = true;
+                    };
+                },
+                else => {
+                    parse_failed = true;
+                },
+            }
         }
-    }
 
-    if (parse_failed) return;
+        if (parse_failed) return;
 
-    _ = scanner.next() catch {};
+        _ = self.scanner.next() catch {};
 
-    if (timestamp_token == null) return;
+        if (timestamp_token == null) return;
 
-    if (is_turn_context) {
+        if (is_turn_context) {
+            if (payload_result.model) |token| {
+                var model_token = token;
+                payload_result.model = null;
+                _ = self.ctx.captureModel(self.allocator, self.model_state, model_token) catch false;
+                model_token.release(self.allocator);
+            }
+            return;
+        }
+
+        if (!is_event_msg) return;
+
+        var payload_type_is_token_count = false;
+        if (payload_result.payload_type) |token| {
+            payload_type_is_token_count = std.mem.eql(u8, token.slice, "token_count");
+        }
+        if (!payload_type_is_token_count) return;
+
+        var raw_timestamp = timestamp_token.?;
+        timestamp_token = null;
+        const timestamp_info = try provider.timestampFromSlice(self.allocator, raw_timestamp.slice, self.timezone_offset_minutes) orelse {
+            raw_timestamp.release(self.allocator);
+            return;
+        };
+        raw_timestamp.release(self.allocator);
+        const timestamp_copy = timestamp_info.text;
+        const iso_date = timestamp_info.local_iso_date;
+
+        var delta_usage: ?model.TokenUsage = null;
+        if (payload_result.last_usage) |last_usage| {
+            delta_usage = model.TokenUsage.fromRaw(last_usage);
+        } else if (payload_result.total_usage) |total_usage| {
+            delta_usage = model.TokenUsage.deltaFrom(total_usage, self.previous_totals.*);
+        }
+        if (payload_result.total_usage) |total_usage| {
+            self.previous_totals.* = total_usage;
+        }
+
+        if (delta_usage == null) return;
+
+        var delta = delta_usage.?;
+        self.ctx.normalizeUsageDelta(&delta);
+        if (delta.input_tokens == 0 and delta.cached_input_tokens == 0 and delta.output_tokens == 0 and delta.reasoning_output_tokens == 0) {
+            return;
+        }
+
+        const payload_model = payload_result.model;
+        const resolved = (try self.ctx.requireModel(self.allocator, self.model_state, payload_model)) orelse return;
         if (payload_result.model) |token| {
             var model_token = token;
             payload_result.model = null;
-            _ = ctx.captureModel(allocator, model_state, model_token) catch false;
-            model_token.release(allocator);
+            model_token.release(self.allocator);
         }
-        return;
+
+        const event = model.TokenUsageEvent{
+            .session_id = self.session_id,
+            .timestamp = timestamp_copy,
+            .local_iso_date = iso_date,
+            .model = resolved.name,
+            .usage = delta,
+            .is_fallback = resolved.is_fallback,
+            .display_input_tokens = self.ctx.computeDisplayInput(delta),
+        };
+        try self.events.append(self.allocator, event);
     }
-
-    if (!is_event_msg) return;
-
-    var payload_type_is_token_count = false;
-    if (payload_result.payload_type) |token| {
-        payload_type_is_token_count = std.mem.eql(u8, token.slice, "token_count");
-    }
-    if (!payload_type_is_token_count) return;
-
-    var raw_timestamp = timestamp_token.?;
-    timestamp_token = null;
-    const timestamp_info = try provider.timestampFromSlice(allocator, raw_timestamp.slice, timezone_offset_minutes) orelse {
-        raw_timestamp.release(allocator);
-        return;
-    };
-    raw_timestamp.release(allocator);
-    const timestamp_copy = timestamp_info.text;
-    const iso_date = timestamp_info.local_iso_date;
-
-    var delta_usage: ?model.TokenUsage = null;
-    if (payload_result.last_usage) |last_usage| {
-        delta_usage = model.TokenUsage.fromRaw(last_usage);
-    } else if (payload_result.total_usage) |total_usage| {
-        delta_usage = model.TokenUsage.deltaFrom(total_usage, previous_totals.*);
-    }
-    if (payload_result.total_usage) |total_usage| {
-        previous_totals.* = total_usage;
-    }
-
-    if (delta_usage == null) return;
-
-    var delta = delta_usage.?;
-    ctx.normalizeUsageDelta(&delta);
-    if (delta.input_tokens == 0 and delta.cached_input_tokens == 0 and delta.output_tokens == 0 and delta.reasoning_output_tokens == 0) {
-        return;
-    }
-
-    const payload_model = payload_result.model;
-    const resolved = (try ctx.requireModel(allocator, model_state, payload_model)) orelse return;
-    if (payload_result.model) |token| {
-        var model_token = token;
-        payload_result.model = null;
-        model_token.release(allocator);
-    }
-
-    const event = model.TokenUsageEvent{
-        .session_id = session_id,
-        .timestamp = timestamp_copy,
-        .local_iso_date = iso_date,
-        .model = resolved.name,
-        .usage = delta,
-        .is_fallback = resolved.is_fallback,
-        .display_input_tokens = ctx.computeDisplayInput(delta),
-    };
-    try events.append(allocator, event);
-}
+};
 
 fn handlePayloadField(
     payload_result: *PayloadResult,
