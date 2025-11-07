@@ -1,6 +1,5 @@
 const std = @import("std");
 const model = @import("../model.zig");
-const timeutil = @import("../time.zig");
 const provider = @import("provider.zig");
 
 const RawUsage = model.RawTokenUsage;
@@ -76,17 +75,18 @@ fn parseGeminiSessionFile(
     timezone_offset_minutes: i32,
     events: *std.ArrayList(model.TokenUsageEvent),
 ) !void {
-    const max_session_size: usize = 32 * 1024 * 1024;
-    const file_data = std.fs.cwd().readFileAlloc(file_path, allocator, std.Io.Limit.limited(max_session_size)) catch |err| {
-        ctx.logWarning(file_path, "failed to read gemini session file", err);
-        return;
-    };
-    defer allocator.free(file_data);
-
-    var parsed = std.json.parseFromSlice(std.json.Value, allocator, file_data, .{}) catch |err| {
-        ctx.logWarning(file_path, "failed to parse gemini session file", err);
-        return;
-    };
+    const parsed_opt = provider.readJsonValue(
+        allocator,
+        ctx,
+        file_path,
+        .{
+            .limit = std.Io.Limit.limited(32 * 1024 * 1024),
+            .read_error_message = "failed to read gemini session file",
+            .parse_error_message = "failed to parse gemini session file",
+        },
+    );
+    if (parsed_opt == null) return;
+    var parsed = parsed_opt.?;
     defer parsed.deinit();
 
     const root_value = parsed.value;
@@ -96,16 +96,7 @@ fn parseGeminiSessionFile(
     };
 
     var session_label = session_id;
-    if (session_obj.get("sessionId")) |sid_value| {
-        switch (sid_value) {
-            .string => |slice| {
-                if (try provider.duplicateNonEmpty(allocator, slice)) |dup| {
-                    session_label = dup;
-                }
-            },
-            else => {},
-        }
-    }
+    provider.overrideSessionLabelFromValue(allocator, &session_label, null, session_obj.get("sessionId"));
 
     const messages_value = session_obj.get("messages") orelse return;
     const messages = switch (messages_value) {
@@ -126,15 +117,9 @@ fn parseGeminiSessionFile(
                     else => continue,
                 };
 
-                const timestamp_value = msg_obj.get("timestamp") orelse continue;
-                const timestamp_slice = switch (timestamp_value) {
-                    .string => |slice| slice,
-                    else => continue,
-                };
-                const timestamp_copy = try provider.duplicateNonEmpty(allocator, timestamp_slice) orelse continue;
-                const iso_date = timeutil.isoDateForTimezone(timestamp_copy, timezone_offset_minutes) catch {
-                    continue;
-                };
+                const timestamp_info = try provider.timestampFromValue(allocator, timezone_offset_minutes, msg_obj.get("timestamp")) orelse continue;
+                const timestamp_copy = timestamp_info.text;
+                const iso_date = timestamp_info.local_iso_date;
 
                 const message_model = msg_obj.get("model");
                 _ = ctx.captureModel(allocator, &model_state, message_model) catch false;

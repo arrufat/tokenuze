@@ -223,6 +223,80 @@ pub fn jsonValueToU64(maybe_value: ?std.json.Value) u64 {
     };
 }
 
+pub const TimestampInfo = struct {
+    text: []const u8,
+    local_iso_date: [10]u8,
+};
+
+pub fn timestampFromSlice(
+    allocator: std.mem.Allocator,
+    slice: []const u8,
+    timezone_offset_minutes: i32,
+) !?TimestampInfo {
+    const duplicate = try duplicateNonEmpty(allocator, slice) orelse return null;
+    const iso_date = timeutil.isoDateForTimezone(duplicate, timezone_offset_minutes) catch {
+        allocator.free(@constCast(duplicate));
+        return null;
+    };
+    return .{ .text = duplicate, .local_iso_date = iso_date };
+}
+
+pub fn timestampFromValue(
+    allocator: std.mem.Allocator,
+    timezone_offset_minutes: i32,
+    maybe_value: ?std.json.Value,
+) !?TimestampInfo {
+    const value = maybe_value orelse return null;
+    return switch (value) {
+        .string => |slice| try timestampFromSlice(allocator, slice, timezone_offset_minutes),
+        else => null,
+    };
+}
+
+pub fn overrideSessionLabelFromValue(
+    allocator: std.mem.Allocator,
+    session_label: *[]const u8,
+    overridden: ?*bool,
+    maybe_value: ?std.json.Value,
+) void {
+    if (overridden) |flag| if (flag.*) return;
+    const value = maybe_value orelse return;
+    const slice = switch (value) {
+        .string => |str| str,
+        else => return,
+    };
+    const duplicate = duplicateNonEmpty(allocator, slice) catch null;
+    if (duplicate) |dup| {
+        session_label.* = dup;
+        if (overridden) |flag| flag.* = true;
+    }
+}
+
+pub const JsonFileOptions = struct {
+    limit: std.Io.Limit = std.Io.Limit.limited(32 * 1024 * 1024),
+    read_error_message: []const u8 = "failed to read session file",
+    parse_error_message: []const u8 = "failed to parse session file",
+};
+
+pub fn readJsonValue(
+    allocator: std.mem.Allocator,
+    ctx: *const ParseContext,
+    file_path: []const u8,
+    options: JsonFileOptions,
+) ?std.json.Parsed(std.json.Value) {
+    const file_data = std.fs.cwd().readFileAlloc(file_path, allocator, options.limit) catch |err| {
+        ctx.logWarning(file_path, options.read_error_message, err);
+        return null;
+    };
+    defer allocator.free(file_data);
+
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, file_data, .{}) catch |err| {
+        ctx.logWarning(file_path, options.parse_error_message, err);
+        return null;
+    };
+    return parsed;
+}
+
 pub const UsageValueMode = enum {
     set,
     add,
@@ -975,6 +1049,59 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             try std.testing.expectEqual(@as(u64, 30), usage.output_tokens);
             try std.testing.expectEqual(@as(u64, 7), usage.reasoning_output_tokens);
             try std.testing.expectEqual(@as(u64, 220), usage.total_tokens);
+        }
+
+        test "timestamp helpers duplicate json values" {
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const allocator = arena.allocator();
+
+            const json_value = std.json.Value{ .string = "2025-02-15T09:30:00Z" };
+            const info = try timestampFromValue(allocator, 0, json_value) orelse unreachable;
+            try std.testing.expectEqualStrings("2025-02-15", info.local_iso_date[0..]);
+        }
+
+        test "session label overrides respect guard" {
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const allocator = arena.allocator();
+
+            var label: []const u8 = "default";
+            var overridden = false;
+            const first = std.json.Value{ .string = "override-one" };
+            overrideSessionLabelFromValue(allocator, &label, &overridden, first);
+            try std.testing.expectEqualStrings("override-one", label);
+            try std.testing.expect(overridden);
+
+            const second = std.json.Value{ .string = "override-two" };
+            overrideSessionLabelFromValue(allocator, &label, &overridden, second);
+            try std.testing.expectEqualStrings("override-one", label);
+        }
+
+        test "readJsonValue loads file data" {
+            const allocator = std.testing.allocator;
+            const tmp_path = "tokenuze-json-test.json";
+            defer std.fs.cwd().deleteFile(tmp_path) catch {};
+            try std.fs.cwd().writeFile(tmp_path, "{ \"ok\": true }");
+
+            const ctx = ParseContext{
+                .provider_name = "test",
+                .legacy_fallback_model = null,
+                .cached_counts_overlap_input = false,
+            };
+
+            const parsed_opt = readJsonValue(
+                allocator,
+                &ctx,
+                tmp_path,
+                .{},
+            ) orelse unreachable;
+            var parsed = parsed_opt;
+            defer parsed.deinit();
+            switch (parsed.value) {
+                .object => |obj| try std.testing.expect(obj.get("ok") != null),
+                else => unreachable,
+            }
         }
     };
 }

@@ -1,6 +1,5 @@
 const std = @import("std");
 const model = @import("../model.zig");
-const timeutil = @import("../time.zig");
 const provider = @import("provider.zig");
 
 const RawUsage = model.RawTokenUsage;
@@ -139,20 +138,7 @@ fn handleClaudeLine(
         else => return,
     };
 
-    if (!session_label_overridden.*) {
-        if (record.get("sessionId")) |sid_value| {
-            switch (sid_value) {
-                .string => |slice| {
-                    const duplicate = provider.duplicateNonEmpty(allocator, slice) catch null;
-                    if (duplicate) |dup| {
-                        session_label.* = dup;
-                        session_label_overridden.* = true;
-                    }
-                },
-                else => {},
-            }
-        }
-    }
+    provider.overrideSessionLabelFromValue(allocator, session_label, session_label_overridden, record.get("sessionId"));
 
     try emitClaudeEvent(
         ctx,
@@ -199,16 +185,9 @@ fn emitClaudeEvent(
         else => return,
     };
 
-    const timestamp_value = record.get("timestamp") orelse return;
-    const timestamp_slice = switch (timestamp_value) {
-        .string => |slice| slice,
-        else => return,
-    };
-    const timestamp_copy = provider.duplicateNonEmpty(allocator, timestamp_slice) catch return;
-    const owned_timestamp = timestamp_copy orelse return;
-    const iso_date = timeutil.isoDateForTimezone(owned_timestamp, timezone_offset_minutes) catch {
-        return;
-    };
+    const timestamp_info = try provider.timestampFromValue(allocator, timezone_offset_minutes, record.get("timestamp")) orelse return;
+    const owned_timestamp = timestamp_info.text;
+    const iso_date = timestamp_info.local_iso_date;
 
     const message_model = message_obj.get("model");
     const resolved_model = (try ctx.requireModel(allocator, model_state, message_model)) orelse return;

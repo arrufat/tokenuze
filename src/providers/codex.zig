@@ -1,6 +1,5 @@
 const std = @import("std");
 const model = @import("../model.zig");
-const timeutil = @import("../time.zig");
 const provider = @import("provider.zig");
 
 const RawUsage = model.RawTokenUsage;
@@ -552,14 +551,13 @@ fn processSessionLine(
 
     var raw_timestamp = timestamp_token.?;
     timestamp_token = null;
-    const timestamp_copy = try provider.duplicateNonEmpty(allocator, raw_timestamp.slice) orelse {
+    const timestamp_info = try provider.timestampFromSlice(allocator, raw_timestamp.slice, timezone_offset_minutes) orelse {
         raw_timestamp.release(allocator);
         return;
     };
     raw_timestamp.release(allocator);
-    const iso_date = timeutil.isoDateForTimezone(timestamp_copy, timezone_offset_minutes) catch {
-        return;
-    };
+    const timestamp_copy = timestamp_info.text;
+    const iso_date = timestamp_info.local_iso_date;
 
     var delta_usage: ?model.TokenUsage = null;
     if (payload_result.last_usage) |last_usage| {
