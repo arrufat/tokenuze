@@ -127,17 +127,8 @@ fn parseGeminiSessionFile(
                     continue;
                 };
 
-                if (msg_obj.get("model")) |model_value| {
-                    switch (model_value) {
-                        .string => |slice| {
-                            if (try SessionProvider.duplicateNonEmpty(allocator, slice)) |model_copy| {
-                                model_state.current = model_copy;
-                                model_state.is_fallback = false;
-                            }
-                        },
-                        else => {},
-                    }
-                }
+                const message_model = msg_obj.get("model");
+                _ = ctx.captureModel(allocator, &model_state, message_model) catch false;
 
                 const current_raw = parseGeminiUsage(tokens_obj);
                 var delta = model.TokenUsage.deltaFrom(current_raw, previous_totals);
@@ -148,7 +139,7 @@ fn parseGeminiSessionFile(
                     continue;
                 }
 
-                const resolved_model = SessionProvider.resolveModel(ctx, &model_state, null) orelse continue;
+                const resolved_model = (try ctx.requireModel(allocator, &model_state, null)) orelse continue;
 
                 const event = model.TokenUsageEvent{
                     .session_id = session_label,

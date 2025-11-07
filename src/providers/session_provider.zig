@@ -33,7 +33,72 @@ pub const ParseContext = struct {
         if (!self.cached_counts_overlap_input) return usage.input_tokens;
         return std.math.add(u64, usage.input_tokens, usage.cached_input_tokens) catch std.math.maxInt(u64);
     }
+
+    pub fn captureModel(
+        self: ParseContext,
+        allocator: std.mem.Allocator,
+        state: *ModelState,
+        raw_model: anytype,
+    ) !bool {
+        _ = self;
+        const slice = modelSliceFrom(@TypeOf(raw_model), raw_model) orelse return false;
+        const duplicate = try duplicateNonEmpty(allocator, slice) orelse return false;
+        state.current = duplicate;
+        state.is_fallback = false;
+        return true;
+    }
+
+    pub fn requireModel(
+        self: ParseContext,
+        allocator: std.mem.Allocator,
+        state: *ModelState,
+        raw_model: anytype,
+    ) !?ResolvedModel {
+        _ = try self.captureModel(allocator, state, raw_model);
+        return resolveModel(&self, state, null);
+    }
 };
+
+fn modelSliceFrom(comptime T: type, raw_model: T) ?[]const u8 {
+    if (T == @TypeOf(null)) return null;
+    switch (@typeInfo(T)) {
+        .optional => {
+            if (raw_model) |value| {
+                return modelSliceFrom(@TypeOf(value), value);
+            }
+            return null;
+        },
+        .pointer => |ptr| {
+            if (ptr.size == .slice and ptr.child == u8) {
+                return raw_model;
+            }
+            return null;
+        },
+        .array => |array_info| {
+            if (array_info.child == u8) {
+                return raw_model[0..];
+            }
+            return null;
+        },
+        .@"struct" => {
+            if (T == Model.TokenBuffer) {
+                return raw_model.slice;
+            }
+            return null;
+        },
+        .@"union" => {
+            if (T == std.json.Value) {
+                return switch (raw_model) {
+                    .string => |slice| slice,
+                    .number_string => |slice| slice,
+                    else => null,
+                };
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
 
 pub const MessageDeduper = struct {
     mutex: std.Thread.Mutex = .{},

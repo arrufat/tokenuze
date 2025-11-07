@@ -536,13 +536,7 @@ fn processSessionLine(
         if (payload_result.model) |token| {
             var model_token = token;
             payload_result.model = null;
-            if (model_token.slice.len != 0) {
-                const duplicated = SessionProvider.duplicateNonEmpty(allocator, model_token.slice) catch null;
-                if (duplicated) |model_copy| {
-                    model_state.current = model_copy;
-                    model_state.is_fallback = false;
-                }
-            }
+            _ = ctx.captureModel(allocator, model_state, model_token) catch false;
             model_token.release(allocator);
         }
         return;
@@ -585,17 +579,13 @@ fn processSessionLine(
         return;
     }
 
-    var extracted_model: ?[]const u8 = null;
+    const payload_model = payload_result.model;
+    const resolved = (try ctx.requireModel(allocator, model_state, payload_model)) orelse return;
     if (payload_result.model) |token| {
         var model_token = token;
         payload_result.model = null;
-        if (model_token.slice.len != 0) {
-            extracted_model = try SessionProvider.duplicateNonEmpty(allocator, model_token.slice);
-        }
         model_token.release(allocator);
     }
-
-    const resolved = SessionProvider.resolveModel(ctx, model_state, extracted_model) orelse return;
 
     const event = model.TokenUsageEvent{
         .session_id = session_id,

@@ -199,20 +199,8 @@ fn emitClaudeEvent(
         return;
     };
 
-    var extracted_model: ?[]const u8 = null;
-    if (message_obj.get("model")) |model_value| {
-        switch (model_value) {
-            .string => |slice| {
-                const duplicated = SessionProvider.duplicateNonEmpty(allocator, slice) catch null;
-                if (duplicated) |dup| {
-                    extracted_model = dup;
-                }
-            },
-            else => {},
-        }
-    }
-
-    const resolved_model = SessionProvider.resolveModel(ctx, model_state, extracted_model) orelse return;
+    const message_model = message_obj.get("model");
+    const resolved_model = (try ctx.requireModel(allocator, model_state, message_model)) orelse return;
 
     const raw = parseClaudeUsage(usage_obj);
     const usage = model.TokenUsage.fromRaw(raw);
