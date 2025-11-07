@@ -173,6 +173,26 @@ pub fn parseTokenNumber(slice: []const u8) u64 {
     return std.fmt.parseInt(u64, slice, 10) catch 0;
 }
 
+pub fn writeUsageJsonFields(
+    jw: anytype,
+    usage: TokenUsage,
+    display_input_override: ?u64,
+) !void {
+    const input_tokens = display_input_override orelse usage.input_tokens;
+    try jw.objectField("inputTokens");
+    try jw.write(input_tokens);
+    try jw.objectField("cacheCreationInputTokens");
+    try jw.write(usage.cache_creation_input_tokens);
+    try jw.objectField("cachedInputTokens");
+    try jw.write(usage.cached_input_tokens);
+    try jw.objectField("outputTokens");
+    try jw.write(usage.output_tokens);
+    try jw.objectField("reasoningOutputTokens");
+    try jw.write(usage.reasoning_output_tokens);
+    try jw.objectField("totalTokens");
+    try jw.write(usage.total_tokens);
+}
+
 pub const TokenUsageEvent = struct {
     session_id: []const u8,
     timestamp: []const u8,
@@ -369,7 +389,7 @@ pub const SessionRecorder = struct {
 
     fn writeUsageObject(jw: anytype, usage: TokenUsage, cost: f64) !void {
         try jw.beginObject();
-        try writeUsageFields(jw, usage);
+        try writeUsageJsonFields(jw, usage, null);
         try jw.objectField("costUSD");
         try jw.write(cost);
         try jw.endObject();
@@ -495,7 +515,7 @@ pub const SessionRecorder = struct {
             try jw.write(self.session_file);
             try jw.objectField("directory");
             try jw.write(self.directory);
-            try writeUsageFields(jw, self.usage);
+            try writeUsageJsonFields(jw, self.usage, null);
             try jw.objectField("costUSD");
             try jw.write(self.cost_usd);
             try jw.objectField("models");
@@ -503,7 +523,7 @@ pub const SessionRecorder = struct {
             for (self.models.items) |model| {
                 try jw.objectField(model.name);
                 try jw.beginObject();
-                try writeUsageFields(jw, model.usage);
+                try writeUsageJsonFields(jw, model.usage, null);
                 try jw.objectField("costUSD");
                 try jw.write(model.cost_usd);
                 try jw.objectField("pricingAvailable");
@@ -527,19 +547,6 @@ pub const SessionRecorder = struct {
 
     fn sessionModelLessThan(_: void, lhs: SessionModel, rhs: SessionModel) bool {
         return std.mem.lessThan(u8, lhs.name, rhs.name);
-    }
-
-    fn writeUsageFields(jw: anytype, usage: TokenUsage) !void {
-        try jw.objectField("inputTokens");
-        try jw.write(usage.input_tokens);
-        try jw.objectField("cachedInputTokens");
-        try jw.write(usage.cached_input_tokens);
-        try jw.objectField("outputTokens");
-        try jw.write(usage.output_tokens);
-        try jw.objectField("reasoningOutputTokens");
-        try jw.write(usage.reasoning_output_tokens);
-        try jw.objectField("totalTokens");
-        try jw.write(usage.total_tokens);
     }
 };
 

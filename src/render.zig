@@ -43,7 +43,7 @@ pub const Renderer = struct {
         pub fn jsonStringify(self: TotalsView, jw: anytype) !void {
             const totals = self.totals;
             try jw.beginObject();
-            try writeUsageFields(jw, totals.usage, totals.display_input_tokens);
+            try Model.writeUsageJsonFields(jw, totals.usage, totals.display_input_tokens);
             try jw.objectField("costUSD");
             try jw.write(totals.cost_usd);
             try jw.objectField("missingPricing");
@@ -62,7 +62,7 @@ pub const Renderer = struct {
             try jw.write(summary.display_date);
             try jw.objectField("isoDate");
             try jw.write(summary.iso_date);
-            try writeUsageFields(jw, summary.usage, summary.display_input_tokens);
+            try Model.writeUsageJsonFields(jw, summary.usage, summary.display_input_tokens);
             try jw.objectField("costUSD");
             try jw.write(summary.cost_usd);
             try jw.objectField("models");
@@ -81,7 +81,7 @@ pub const Renderer = struct {
             for (self.models) |*model| {
                 try jw.objectField(model.name);
                 try jw.beginObject();
-                try writeUsageFields(jw, model.usage, model.display_input_tokens);
+                try Model.writeUsageJsonFields(jw, model.usage, model.display_input_tokens);
                 try jw.objectField("costUSD");
                 try jw.write(model.cost_usd);
                 try jw.objectField("pricingAvailable");
@@ -93,19 +93,4 @@ pub const Renderer = struct {
             try jw.endObject();
         }
     };
-
-    fn writeUsageFields(jw: anytype, usage: Model.TokenUsage, display_input: u64) !void {
-        try jw.objectField("inputTokens");
-        try jw.write(display_input);
-        try jw.objectField("cacheCreationInputTokens");
-        try jw.write(usage.cache_creation_input_tokens);
-        try jw.objectField("cachedInputTokens");
-        try jw.write(usage.cached_input_tokens);
-        try jw.objectField("outputTokens");
-        try jw.write(usage.output_tokens);
-        try jw.objectField("reasoningOutputTokens");
-        try jw.write(usage.reasoning_output_tokens);
-        try jw.objectField("totalTokens");
-        try jw.write(usage.total_tokens);
-    }
 };
