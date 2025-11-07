@@ -458,13 +458,9 @@ const CodexLineHandler = struct {
         defer if (timestamp_token) |*tok| tok.release(self.allocator);
         var is_turn_context = false;
         var is_event_msg = false;
-        var parse_failed = false;
 
-        while (!parse_failed) {
-            const key_token = self.scanner.nextAlloc(self.allocator, .alloc_if_needed) catch {
-                parse_failed = true;
-                break;
-            };
+        while (true) {
+            const key_token = self.scanner.nextAlloc(self.allocator, .alloc_if_needed) catch return;
 
             switch (key_token) {
                 .object_end => break,
@@ -479,9 +475,7 @@ const CodexLineHandler = struct {
                         &timestamp_token,
                         &is_turn_context,
                         &is_event_msg,
-                    ) catch {
-                        parse_failed = true;
-                    };
+                    ) catch return;
                 },
                 .allocated_string => |buf| {
                     var key = model.TokenBuffer{ .slice = buf, .owned = buf };
@@ -494,17 +488,11 @@ const CodexLineHandler = struct {
                         &timestamp_token,
                         &is_turn_context,
                         &is_event_msg,
-                    ) catch {
-                        parse_failed = true;
-                    };
+                    ) catch return;
                 },
-                else => {
-                    parse_failed = true;
-                },
+                else => return,
             }
         }
-
-        if (parse_failed) return;
 
         _ = self.scanner.next() catch {};
 
