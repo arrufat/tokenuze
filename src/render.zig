@@ -172,13 +172,7 @@ pub const Renderer = struct {
         var cells: [column_count][]const u8 = undefined;
         cells[0] = summary.display_date;
         cells[1] = try formatModels(allocator, summary.models.items);
-        const input_tokens = effectiveInputTokens(summary.usage, summary.display_input_tokens);
-        cells[2] = try formatNumber(allocator, input_tokens);
-        cells[3] = try formatNumber(allocator, summary.usage.output_tokens);
-        cells[4] = try formatNumber(allocator, summary.usage.cache_creation_input_tokens);
-        cells[5] = try formatNumber(allocator, summary.usage.cached_input_tokens);
-        cells[6] = try formatNumber(allocator, summary.usage.total_tokens);
-        cells[7] = try formatCurrency(allocator, summary.cost_usd);
+        try formatUsageCells(allocator, summary, &cells);
         return Row{ .cells = cells };
     }
 
@@ -186,14 +180,26 @@ pub const Renderer = struct {
         var cells: [column_count][]const u8 = undefined;
         cells[0] = "TOTAL";
         cells[1] = "-";
-        const input_tokens = effectiveInputTokens(totals.usage, totals.display_input_tokens);
-        cells[2] = try formatNumber(allocator, input_tokens);
-        cells[3] = try formatNumber(allocator, totals.usage.output_tokens);
-        cells[4] = try formatNumber(allocator, totals.usage.cache_creation_input_tokens);
-        cells[5] = try formatNumber(allocator, totals.usage.cached_input_tokens);
-        cells[6] = try formatNumber(allocator, totals.usage.total_tokens);
-        cells[7] = try formatCurrency(allocator, totals.cost_usd);
+        try formatUsageCells(allocator, totals, &cells);
         return Row{ .cells = cells };
+    }
+
+    fn formatUsageCells(
+        allocator: std.mem.Allocator,
+        data: anytype,
+        cells: *[column_count][]const u8,
+    ) !void {
+        const value = switch (@typeInfo(@TypeOf(data))) {
+            .pointer => data.*,
+            else => data,
+        };
+        const input_tokens = effectiveInputTokens(value.usage, value.display_input_tokens);
+        cells[2] = try formatNumber(allocator, input_tokens);
+        cells[3] = try formatNumber(allocator, value.usage.output_tokens);
+        cells[4] = try formatNumber(allocator, value.usage.cache_creation_input_tokens);
+        cells[5] = try formatNumber(allocator, value.usage.cached_input_tokens);
+        cells[6] = try formatNumber(allocator, value.usage.total_tokens);
+        cells[7] = try formatCurrency(allocator, value.cost_usd);
     }
 
     fn effectiveInputTokens(usage: Model.TokenUsage, display_override: u64) u64 {
