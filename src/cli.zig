@@ -295,7 +295,7 @@ fn optionDescription(spec: *const OptionSpec, tz_label: []const u8, buffer: []u8
         ) catch spec.desc,
         .log_level => std.fmt.bufPrint(
             buffer,
-            "Control logging verbosity (default: info)",
+            "Control logging verbosity (error|warn|info|debug, default: info)",
             .{},
         ) catch spec.desc,
         else => spec.desc,
