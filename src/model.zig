@@ -702,7 +702,9 @@ fn resolveWithName(
 ) ?ModelPricing {
     if (pricing_map.get(lookup_name)) |rate| {
         if (!std.mem.eql(u8, alias_name, lookup_name)) {
-            cachePricingAlias(allocator, pricing_map, alias_name, rate) catch {};
+            cachePricingAlias(allocator, pricing_map, alias_name, rate) catch |err| {
+                std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
+            };
         }
         return rate;
     }
@@ -723,7 +725,9 @@ fn lookupWithPrefixes(
         };
         defer allocator.free(candidate);
         if (pricing_map.get(candidate)) |rate| {
-            cachePricingAlias(allocator, pricing_map, alias_name, rate) catch {};
+            cachePricingAlias(allocator, pricing_map, alias_name, rate) catch |err| {
+                std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
+            };
             return rate;
         }
     }
@@ -743,7 +747,9 @@ fn lookupBySubstring(
     while (iterator.next()) |entry| {
         const key = entry.key_ptr.*;
         if (asciiEqualIgnoreCase(key, lookup_name)) {
-            cachePricingAlias(allocator, pricing_map, alias_name, entry.value_ptr.*) catch {};
+            cachePricingAlias(allocator, pricing_map, alias_name, entry.value_ptr.*) catch |err| {
+                std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
+            };
             return entry.value_ptr.*;
         }
 
@@ -763,7 +769,9 @@ fn lookupBySubstring(
     }
 
     if (best_rate) |rate| {
-        cachePricingAlias(allocator, pricing_map, alias_name, rate) catch {};
+        cachePricingAlias(allocator, pricing_map, alias_name, rate) catch |err| {
+            std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
+        };
         return rate;
     }
     return null;
