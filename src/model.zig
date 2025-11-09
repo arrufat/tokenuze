@@ -747,7 +747,7 @@ fn cachePricingAlias(
 fn asciiEqualIgnoreCase(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |lhs, rhs| {
-        if (toLower(lhs) != toLower(rhs)) return false;
+        if (std.ascii.toLower(lhs) != std.ascii.toLower(rhs)) return false;
     }
     return true;
 }
@@ -759,7 +759,7 @@ fn asciiContainsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     while (idx + needle.len <= haystack.len) : (idx += 1) {
         var matched = true;
         for (needle, 0..) |ch, sub_idx| {
-            if (toLower(haystack[idx + sub_idx]) != toLower(ch)) {
+            if (std.ascii.toLower(haystack[idx + sub_idx]) != std.ascii.toLower(ch)) {
                 matched = false;
                 break;
             }
@@ -767,10 +767,6 @@ fn asciiContainsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
         if (matched) return true;
     }
     return false;
-}
-
-fn toLower(ch: u8) u8 {
-    return std.ascii.toLower(ch);
 }
 
 pub fn accumulateTotals(
