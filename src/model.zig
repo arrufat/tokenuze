@@ -753,8 +753,8 @@ fn lookupBySubstring(
             return entry.value_ptr.*;
         }
 
-        const forward = asciiContainsIgnoreCase(key, lookup_name);
-        const backward = asciiContainsIgnoreCase(lookup_name, key);
+        const forward = containsIgnoreCase(key, lookup_name);
+        const backward = containsIgnoreCase(lookup_name, key);
         if (!forward and !backward) continue;
 
         const score = if (forward)
@@ -789,7 +789,13 @@ fn cachePricingAlias(
     try pricing_map.put(duplicate, pricing);
 }
 
-fn asciiContainsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+fn ratioScore(numerator: usize, denominator: usize) usize {
+    if (denominator == 0) return 0;
+    const scaled = (@as(u128, numerator) * 100) / @as(u128, denominator);
+    return std.math.cast(usize, scaled) orelse std.math.maxInt(usize);
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
     if (needle.len > haystack.len) return false;
     var idx: usize = 0;
@@ -804,12 +810,6 @@ fn asciiContainsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
         if (matched) return true;
     }
     return false;
-}
-
-fn ratioScore(numerator: usize, denominator: usize) usize {
-    if (denominator == 0) return 0;
-    const scaled = (@as(u128, numerator) * 100) / @as(u128, denominator);
-    return std.math.cast(usize, scaled) orelse std.math.maxInt(usize);
 }
 
 fn createDateVariant(
