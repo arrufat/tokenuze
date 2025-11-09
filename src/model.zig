@@ -222,6 +222,18 @@ pub const ModelPricing = struct {
 
 pub const PricingMap = std.StringHashMap(ModelPricing);
 
+const pricing_candidate_prefixes = [_][]const u8{
+    "anthropic.",
+    "anthropic/",
+    "bedrock.",
+    "claude-",
+    "claude-3-",
+    "claude-3-5-",
+    "openrouter/anthropic/",
+    "openrouter/openai/",
+    "vertex_ai/",
+};
+
 pub fn deinitPricingMap(map: *PricingMap, allocator: std.mem.Allocator) void {
     var iterator = map.iterator();
     while (iterator.next()) |entry| {
@@ -637,7 +649,7 @@ pub fn applyPricing(
     summary.missing_pricing.clearRetainingCapacity();
 
     for (summary.models.items) |*model| {
-        if (pricing_map.get(model.name)) |rate| {
+        if (resolveModelPricing(allocator, pricing_map, model.name)) |rate| {
             model.pricing_available = true;
             model.cost_usd = model.usage.cost(rate);
             summary.cost_usd += model.cost_usd;
@@ -648,6 +660,117 @@ pub fn applyPricing(
             appendUniqueString(allocator, &summary.missing_pricing, model.name) catch {};
         }
     }
+}
+
+fn resolveModelPricing(
+    allocator: std.mem.Allocator,
+    pricing_map: *PricingMap,
+    model_name: []const u8,
+) ?ModelPricing {
+    if (pricing_map.get(model_name)) |rate| return rate;
+
+    if (lookupWithPrefixes(allocator, pricing_map, model_name)) |rate| return rate;
+
+    return lookupBySubstring(allocator, pricing_map, model_name);
+}
+
+fn lookupWithPrefixes(
+    allocator: std.mem.Allocator,
+    pricing_map: *PricingMap,
+    model_name: []const u8,
+) ?ModelPricing {
+    for (pricing_candidate_prefixes) |prefix| {
+        const candidate = std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, model_name }) catch {
+            continue;
+        };
+        defer allocator.free(candidate);
+        if (pricing_map.get(candidate)) |rate| {
+            cachePricingAlias(allocator, pricing_map, model_name, rate) catch {};
+            return rate;
+        }
+    }
+    return null;
+}
+
+fn lookupBySubstring(
+    allocator: std.mem.Allocator,
+    pricing_map: *PricingMap,
+    model_name: []const u8,
+) ?ModelPricing {
+    var best_rate: ?ModelPricing = null;
+    var best_score: usize = 0;
+
+    var iterator = pricing_map.iterator();
+    while (iterator.next()) |entry| {
+        const key = entry.key_ptr.*;
+        if (asciiEqualIgnoreCase(key, model_name)) {
+            cachePricingAlias(allocator, pricing_map, model_name, entry.value_ptr.*) catch {};
+            return entry.value_ptr.*;
+        }
+
+        const forward = asciiContainsIgnoreCase(key, model_name);
+        const backward = asciiContainsIgnoreCase(model_name, key);
+        if (!forward and !backward) continue;
+
+        const score = if (forward and backward)
+            key.len + model_name.len
+        else if (forward)
+            model_name.len
+        else
+            key.len;
+
+        if (score > best_score) {
+            best_score = score;
+            best_rate = entry.value_ptr.*;
+        }
+    }
+
+    if (best_rate) |rate| {
+        cachePricingAlias(allocator, pricing_map, model_name, rate) catch {};
+        return rate;
+    }
+    return null;
+}
+
+fn cachePricingAlias(
+    allocator: std.mem.Allocator,
+    pricing_map: *PricingMap,
+    alias: []const u8,
+    pricing: ModelPricing,
+) !void {
+    if (pricing_map.get(alias) != null) return;
+    const duplicate = try allocator.dupe(u8, alias);
+    errdefer allocator.free(duplicate);
+    try pricing_map.put(duplicate, pricing);
+}
+
+fn asciiEqualIgnoreCase(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |lhs, rhs| {
+        if (toLower(lhs) != toLower(rhs)) return false;
+    }
+    return true;
+}
+
+fn asciiContainsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var idx: usize = 0;
+    while (idx + needle.len <= haystack.len) : (idx += 1) {
+        var matched = true;
+        for (needle, 0..) |ch, sub_idx| {
+            if (toLower(haystack[idx + sub_idx]) != toLower(ch)) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) return true;
+    }
+    return false;
+}
+
+fn toLower(ch: u8) u8 {
+    return std.ascii.toLower(ch);
 }
 
 pub fn accumulateTotals(
@@ -762,4 +885,40 @@ pub fn formatDisplayDate(allocator: std.mem.Allocator, iso_date: []const u8) ![]
     if (month == 0 or month > months.len) return error.InvalidDate;
 
     return std.fmt.allocPrint(allocator, "{s} {d:0>2}, {d}", .{ months[month - 1], day, year });
+}
+
+test "resolveModelPricing handles anthropic prefixes" {
+    const allocator = std.testing.allocator;
+    var map = PricingMap.init(allocator);
+    defer deinitPricingMap(&map, allocator);
+
+    const key = try allocator.dupe(u8, "us.anthropic.claude-haiku-4-5-20251001-v1:0");
+    try map.put(key, .{
+        .input_cost_per_m = 1,
+        .cache_creation_cost_per_m = 1,
+        .cached_input_cost_per_m = 1,
+        .output_cost_per_m = 1,
+    });
+
+    const rate = resolveModelPricing(allocator, &map, "claude-haiku-4-5-20251001") orelse unreachable;
+    try std.testing.expectEqual(@as(f64, 1), rate.input_cost_per_m);
+    try std.testing.expect(map.get("claude-haiku-4-5-20251001") != null);
+}
+
+test "resolveModelPricing falls back to substring match" {
+    const allocator = std.testing.allocator;
+    var map = PricingMap.init(allocator);
+    defer deinitPricingMap(&map, allocator);
+
+    const key = try allocator.dupe(u8, "openrouter/anthropic/claude-sonnet-4-5-20250929@20250929-v1:0");
+    try map.put(key, .{
+        .input_cost_per_m = 2,
+        .cache_creation_cost_per_m = 2,
+        .cached_input_cost_per_m = 2,
+        .output_cost_per_m = 2,
+    });
+
+    const rate = resolveModelPricing(allocator, &map, "claude-sonnet-4-5-20250929") orelse unreachable;
+    try std.testing.expectEqual(@as(f64, 2), rate.cache_creation_cost_per_m);
+    try std.testing.expect(map.get("claude-sonnet-4-5-20250929") != null);
 }
