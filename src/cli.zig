@@ -23,6 +23,7 @@ const OptionId = enum {
     until,
     tz,
     pretty,
+    table,
     log_level,
     agent,
     upload,
@@ -50,6 +51,7 @@ const option_specs = [_]OptionSpec{
     .{ .id = .until, .long_name = "until", .value_name = "YYYYMMDD", .desc = "Only include events on/before the date", .kind = .value },
     .{ .id = .tz, .long_name = "tz", .value_name = "<offset>", .desc = "Bucket dates in the provided timezone (default: {s})", .kind = .value },
     .{ .id = .pretty, .long_name = "pretty", .desc = "Expand JSON output for readability" },
+    .{ .id = .table, .long_name = "table", .desc = "Render usage as a table (disables JSON output)" },
     .{ .id = .log_level, .long_name = "log-level", .value_name = "LEVEL", .desc = "Control logging verbosity (error|warn|info|debug)", .kind = .value },
     .{ .id = .agent, .long_name = "agent", .value_name = "<name>", .desc = "Restrict collection to selected providers (available: {s})", .kind = .value },
     .{ .id = .upload, .long_name = "upload", .desc = "Upload Tokenuze JSON via DASHBOARD_API_* envs" },
@@ -231,6 +233,7 @@ fn applyOption(
     switch (spec.id) {
         .upload => options.upload = true,
         .pretty => options.filters.pretty_output = true,
+        .table => options.filters.table_output = true,
         .log_level => {
             const value = args.next() orelse return missingValueError(spec.long_name);
             options.log_level = try parseLogLevelArg(value);
@@ -408,8 +411,8 @@ test "cli parses filters and agent selection" {
         "--since",  "20250101",
         "--until",  "20250131",
         "--tz",     "+02",
-        "--pretty", "--agent",
-        "codex",
+        "--pretty", "--table",
+        "--agent",  "codex",
     };
     var iter = TestIterator.init(args);
     const options = try parseOptionsIterator(&iter);
@@ -418,6 +421,7 @@ test "cli parses filters and agent selection" {
     try testing.expectEqual(expected_since, options.filters.since.?);
     try testing.expectEqual(expected_until, options.filters.until.?);
     try testing.expect(options.filters.pretty_output);
+    try testing.expect(options.filters.table_output);
     try testing.expectEqual(@as(i16, 2 * 60), options.filters.timezone_offset_minutes);
     const codex_index = tokenuze.findProviderIndex("codex") orelse unreachable;
     try testing.expect(options.providers.includesIndex(codex_index));

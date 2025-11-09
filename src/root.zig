@@ -191,7 +191,11 @@ pub fn run(allocator: std.mem.Allocator, filters: DateFilters, selection: Provid
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const out_writer = &stdout_writer.interface;
-    try render.Renderer.writeSummary(out_writer, summary.builder.items(), &summary.totals, filters.pretty_output);
+    if (filters.table_output) {
+        try render.Renderer.writeTable(out_writer, allocator, summary.builder.items(), &summary.totals);
+    } else {
+        try render.Renderer.writeSummary(out_writer, summary.builder.items(), &summary.totals, filters.pretty_output);
+    }
     try flushOutput(out_writer);
 }
 

@@ -9,6 +9,7 @@ pub const DateFilters = struct {
     since: ?[10]u8 = null,
     until: ?[10]u8 = null,
     pretty_output: bool = false,
+    table_output: bool = false,
     timezone_offset_minutes: i16 = @intCast(timeutil.DEFAULT_TIMEZONE_OFFSET_MINUTES),
 };
 
