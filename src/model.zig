@@ -702,9 +702,7 @@ fn resolveWithName(
 ) ?ModelPricing {
     if (pricing_map.get(lookup_name)) |rate| {
         if (!std.mem.eql(u8, alias_name, lookup_name)) {
-            cachePricingAlias(allocator, pricing_map, alias_name, rate) catch |err| {
-                std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
-            };
+            tryCachePricingAlias(allocator, pricing_map, alias_name, rate);
         }
         return rate;
     }
@@ -725,9 +723,7 @@ fn lookupWithPrefixes(
         };
         defer allocator.free(candidate);
         if (pricing_map.get(candidate)) |rate| {
-            cachePricingAlias(allocator, pricing_map, alias_name, rate) catch |err| {
-                std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
-            };
+            tryCachePricingAlias(allocator, pricing_map, alias_name, rate);
             return rate;
         }
     }
@@ -747,9 +743,7 @@ fn lookupBySubstring(
     while (iterator.next()) |entry| {
         const key = entry.key_ptr.*;
         if (std.ascii.eqlIgnoreCase(key, lookup_name)) {
-            cachePricingAlias(allocator, pricing_map, alias_name, entry.value_ptr.*) catch |err| {
-                std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
-            };
+            tryCachePricingAlias(allocator, pricing_map, alias_name, entry.value_ptr.*);
             return entry.value_ptr.*;
         }
 
@@ -769,9 +763,7 @@ fn lookupBySubstring(
     }
 
     if (best_rate) |rate| {
-        cachePricingAlias(allocator, pricing_map, alias_name, rate) catch |err| {
-            std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias_name, @errorName(err) });
-        };
+        tryCachePricingAlias(allocator, pricing_map, alias_name, rate);
         return rate;
     }
     return null;
@@ -787,6 +779,17 @@ fn cachePricingAlias(
     const duplicate = try allocator.dupe(u8, alias);
     errdefer allocator.free(duplicate);
     try pricing_map.put(duplicate, pricing);
+}
+
+fn tryCachePricingAlias(
+    allocator: std.mem.Allocator,
+    pricing_map: *PricingMap,
+    alias: []const u8,
+    pricing: ModelPricing,
+) void {
+    cachePricingAlias(allocator, pricing_map, alias, pricing) catch |err| {
+        std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias, @errorName(err) });
+    };
 }
 
 fn ratioScore(numerator: usize, denominator: usize) usize {
