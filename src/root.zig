@@ -11,9 +11,27 @@ pub const machine_id = @import("machine_id.zig");
 pub const uploader = @import("upload.zig");
 const empty_weekly_json = "{\"weekly\":[]}";
 
-pub const std_options = .{
-    .log_level = .info,
+pub const std_options: std.Options = .{
+    // Compile debug logs so they can be enabled dynamically at runtime.
+    .log_level = .debug,
+    .logFn = logFn,
 };
+
+var runtime_log_level: std.log.Level = .info;
+
+pub fn setLogLevel(level: std.log.Level) void {
+    runtime_log_level = level;
+}
+
+pub fn logFn(
+    comptime level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (@intFromEnum(level) > @intFromEnum(runtime_log_level)) return;
+    std.log.defaultLog(level, scope, format, args);
+}
 
 pub const DateFilters = Model.DateFilters;
 pub const ParseDateError = Model.ParseDateError;
@@ -165,6 +183,7 @@ pub fn findProviderIndex(name: []const u8) ?usize {
 
 pub fn run(allocator: std.mem.Allocator, filters: DateFilters, selection: ProviderSelection) !void {
     const enable_progress = std.fs.File.stdout().isTty();
+    logRunStart(filters, selection, enable_progress);
     var summary = try collectSummary(allocator, filters, selection, enable_progress);
     defer summary.deinit(allocator);
 
@@ -205,6 +224,66 @@ pub fn collectUploadReport(
         .daily_json = daily_json,
         .sessions_json = sessions_json,
         .weekly_json = weekly_json,
+    };
+}
+
+const ProviderSelectionSummary = struct {
+    names: []const u8,
+    count: usize,
+};
+
+fn logRunStart(filters: DateFilters, selection: ProviderSelection, enable_progress: bool) void {
+    var tz_buf: [16]u8 = undefined;
+    const tz_label = formatTimezoneLabel(&tz_buf, filters.timezone_offset_minutes);
+    const since_label = if (filters.since) |since| since[0..] else "any";
+    const until_label = if (filters.until) |until| until[0..] else "any";
+
+    var provider_buf: [256]u8 = undefined;
+    const provider_summary = describeSelectedProviders(selection, &provider_buf);
+
+    std.log.info(
+        "run.start since={s} until={s} tz={s} providers={d} pretty={any} progress={any}",
+        .{
+            since_label,
+            until_label,
+            tz_label,
+            provider_summary.count,
+            filters.pretty_output,
+            enable_progress,
+        },
+    );
+    std.log.debug("run.providers {s}", .{provider_summary.names});
+}
+
+fn describeSelectedProviders(selection: ProviderSelection, buffer: []u8) ProviderSelectionSummary {
+    var cursor: usize = 0;
+    var first = true;
+    var count: usize = 0;
+
+    const Append = struct {
+        fn run(buf: []u8, cursor_ptr: *usize, text: []const u8) void {
+            if (cursor_ptr.* >= buf.len) return;
+            const remaining = buf.len - cursor_ptr.*;
+            const to_copy = @min(text.len, remaining);
+            std.mem.copyForwards(u8, buf[cursor_ptr.* .. cursor_ptr.* + to_copy], text[0..to_copy]);
+            cursor_ptr.* += to_copy;
+        }
+    };
+
+    for (providers, 0..) |prov, idx| {
+        if (!selection.includesIndex(idx)) continue;
+        count += 1;
+        if (!first) {
+            Append.run(buffer, &cursor, ", ");
+        }
+        Append.run(buffer, &cursor, prov.name);
+        first = false;
+    }
+
+    const written = buffer[0..cursor];
+    return .{
+        .names = if (written.len == 0) "(none)" else written,
+        .count = count,
     };
 }
 
@@ -290,6 +369,10 @@ fn collectSummaryInternal(
     for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
         const before_events = summary_builder.eventCount();
+        std.log.debug(
+            "phase.{s} starting (events_before={d})",
+            .{ prov.phase_label, before_events },
+        );
         const stats = blk: {
             var collect_phase = try PhaseTracker.start(progress_parent, prov.phase_label, 0);
             defer collect_phase.finish();
@@ -377,6 +460,7 @@ fn loadPricing(
 ) !void {
     var pricing_phase = try PhaseTracker.start(progress_parent, "load pricing", 0);
     defer pricing_phase.finish();
+    std.log.debug("pricing.load begin (selection_mask=0x{x})", .{selection.mask});
 
     const before_models = pricing.count();
     const remote_stats = try provider.loadRemotePricing(allocator, temp_allocator, pricing);
@@ -399,6 +483,10 @@ fn loadPricing(
     var fallback_timer = try std.time.Timer.start();
     for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
+        std.log.debug(
+            "pricing.{s}.fallback start (models={d})",
+            .{ prov.name, pricing.count() },
+        );
         try prov.load_pricing(allocator, temp_allocator, pricing);
     }
     const fallback_elapsed = nsToMs(fallback_timer.read());

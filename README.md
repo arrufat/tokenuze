@@ -24,6 +24,7 @@ tokenuze --help
 - `--until YYYYMMDD` caps the range; must be >= `--since` when both are present.
 - `--tz <offset>` buckets events using a fixed offset like `+09`, `-05:30`, or `UTC` (default: system timezone).
 - `--pretty` enables indented JSON output (handy when reading the payload manually).
+- `--log-level <error|warn|info|debug>` controls how chatty Tokenuze's logs are (defaults to `info`).
 - `--agent <codex|gemini|claude>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers).
 - `--machine-id` prints the cached/generated machine identifier and exits (no summaries).
 - `--upload` captures Tokenuze's JSON summary for the selected providers and POSTs it to `/api/usage/report` using `DASHBOARD_API_URL`/`DASHBOARD_API_KEY`.
