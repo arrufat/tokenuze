@@ -20,6 +20,7 @@ pub const Renderer = struct {
     };
 
     const column_count = table_columns.len;
+    const max_models_in_table = 3;
 
     const Row = struct {
         cells: [column_count][]const u8,
@@ -276,15 +277,14 @@ pub const Renderer = struct {
         }
         var buffer = std.ArrayList(u8).empty;
         errdefer buffer.deinit(allocator);
-        const max_models = 3;
-        const display_count = if (models.len < max_models) models.len else max_models;
+        const display_count = if (models.len < max_models_in_table) models.len else max_models_in_table;
         for (models[0..display_count], 0..) |model, idx| {
             if (idx > 0) try buffer.appendSlice(allocator, ", ");
             try buffer.appendSlice(allocator, model.name);
         }
-        if (models.len > max_models) {
+        if (models.len > max_models_in_table) {
             var suffix_buf: [32]u8 = undefined;
-            const suffix = try std.fmt.bufPrint(&suffix_buf, " (+{d} more)", .{models.len - max_models});
+            const suffix = try std.fmt.bufPrint(&suffix_buf, " (+{d} more)", .{models.len - max_models_in_table});
             try buffer.appendSlice(allocator, suffix);
         }
         return buffer.toOwnedSlice(allocator);
