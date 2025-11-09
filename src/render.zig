@@ -214,17 +214,17 @@ pub const Renderer = struct {
         }
     }
 
-    fn writeRule(writer: anytype, widths: []const usize, ch: u8) !void {
+    fn writeRule(writer: *std.Io.Writer, widths: []const usize, ch: u8) !void {
         try writer.writeAll("+");
         for (widths) |width| {
-            try writeCharNTimes(writer, ch, width + 2);
+            try writer.splatByteAll(ch, width + 2);
             try writer.writeAll("+");
         }
         try writer.writeAll("\n");
     }
 
     fn writeRow(
-        writer: anytype,
+        writer: *std.Io.Writer,
         widths: []const usize,
         cells: []const []const u8,
         columns: []const Column,
@@ -238,10 +238,10 @@ pub const Renderer = struct {
             switch (alignment) {
                 .left => {
                     try writer.writeAll(cell);
-                    try writePadding(writer, ' ', padding);
+                    try writer.splatByteAll(' ', padding);
                 },
                 .right => {
-                    try writePadding(writer, ' ', padding);
+                    try writer.splatByteAll(' ', padding);
                     try writer.writeAll(cell);
                 },
             }
@@ -249,23 +249,6 @@ pub const Renderer = struct {
             try writer.writeAll("|");
         }
         try writer.writeAll("\n");
-    }
-
-    fn writePadding(writer: anytype, ch: u8, count: usize) !void {
-        if (count == 0) return;
-        try writeCharNTimes(writer, ch, count);
-    }
-
-    fn writeCharNTimes(writer: anytype, ch: u8, count: usize) !void {
-        if (count == 0) return;
-        var chunk_buf: [64]u8 = undefined;
-        @memset(chunk_buf[0..], ch);
-        var remaining = count;
-        while (remaining > 0) {
-            const take = if (remaining < chunk_buf.len) remaining else chunk_buf.len;
-            try writer.writeAll(chunk_buf[0..take]);
-            remaining -= take;
-        }
     }
 
     fn formatModels(
