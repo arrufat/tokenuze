@@ -63,7 +63,7 @@ const option_specs = [_]OptionSpec{
     .{ .id = .help, .long_name = "help", .short_name = 'h', .desc = "Show this message and exit" },
 };
 
-var provider_desc_buffer: [256]u8 = undefined;
+threadlocal var provider_desc_buffer: [256]u8 = undefined;
 
 pub fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
     var args = try std.process.argsWithAllocator(allocator);
