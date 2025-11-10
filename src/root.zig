@@ -371,6 +371,49 @@ fn collectSummaryInternal(
         try loadPricing(allocator, temp_allocator, selection, &pricing_map, progress_parent);
     }
 
+    try collectSelectedProviders(
+        allocator,
+        temp_allocator,
+        filters,
+        selection,
+        &summary_builder,
+        &pricing_map,
+        progress_parent,
+    );
+
+    var summaries = summary_builder.items();
+    if (summaries.len == 0) {
+        std.log.info("no events to process; total runtime {d:.2}ms", .{nsToMs(total_timer.read())});
+        if (enable_progress) std.Progress.setStatus(.success);
+        return SummaryResult{ .builder = summary_builder, .totals = totals };
+    }
+
+    try finalizeSummaries(
+        allocator,
+        progress_parent,
+        summaries,
+        &pricing_map,
+        &totals,
+        session_recorder,
+    );
+
+    std.log.info("phase.total runtime {d:.2}ms", .{nsToMs(total_timer.read())});
+    if (enable_progress) std.Progress.setStatus(.success);
+
+    return SummaryResult{ .builder = summary_builder, .totals = totals };
+}
+
+fn collectSelectedProviders(
+    allocator: std.mem.Allocator,
+    temp_allocator: std.mem.Allocator,
+    filters: DateFilters,
+    selection: ProviderSelection,
+    summary_builder: *Model.SummaryBuilder,
+    pricing_map: *Model.PricingMap,
+    progress_parent: ?*std.Progress.Node,
+) !void {
+    if (selection.isEmpty()) return;
+
     for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
         const before_events = summary_builder.eventCount();
@@ -381,7 +424,7 @@ fn collectSummaryInternal(
         const stats = blk: {
             var collect_phase = try PhaseTracker.start(progress_parent, prov.phase_label, 0);
             defer collect_phase.finish();
-            try prov.collect(allocator, temp_allocator, &summary_builder, filters, &pricing_map, collect_phase.progress());
+            try prov.collect(allocator, temp_allocator, summary_builder, filters, pricing_map, collect_phase.progress());
             break :blk .{
                 .elapsed = collect_phase.elapsedMs(),
                 .events_added = summary_builder.eventCount() - before_events,
@@ -398,14 +441,16 @@ fn collectSummaryInternal(
             },
         );
     }
+}
 
-    var summaries = summary_builder.items();
-    if (summaries.len == 0) {
-        std.log.info("no events to process; total runtime {d:.2}ms", .{nsToMs(total_timer.read())});
-        if (enable_progress) std.Progress.setStatus(.success);
-        return SummaryResult{ .builder = summary_builder, .totals = totals };
-    }
-
+fn finalizeSummaries(
+    allocator: std.mem.Allocator,
+    progress_parent: ?*std.Progress.Node,
+    summaries: []DailySummary,
+    pricing_map: *Model.PricingMap,
+    totals: *SummaryTotals,
+    session_recorder: ?*Model.SessionRecorder,
+) !void {
     var missing_set = std.StringHashMap(u8).init(allocator);
     defer missing_set.deinit();
 
@@ -413,7 +458,7 @@ fn collectSummaryInternal(
         var pricing_phase = try PhaseTracker.start(progress_parent, "apply pricing", summaries.len);
         defer pricing_phase.finish();
         for (summaries) |*summary| {
-            Model.applyPricing(allocator, summary, &pricing_map, &missing_set);
+            Model.applyPricing(allocator, summary, pricing_map, &missing_set);
             std.sort.pdq(ModelSummary, summary.models.items, {}, modelLessThan);
             if (pricing_phase.progress()) |node| std.Progress.Node.completeOne(node);
         }
@@ -423,8 +468,9 @@ fn collectSummaryInternal(
         "phase.apply_pricing completed in {d:.2}ms (days={d})",
         .{ pricing_elapsed, summaries.len },
     );
+
     if (session_recorder) |recorder| {
-        recorder.applyPricing(&pricing_map);
+        recorder.applyPricing(pricing_map);
     }
 
     const sort_elapsed = blk: {
@@ -441,7 +487,7 @@ fn collectSummaryInternal(
     const totals_elapsed = blk: {
         var totals_phase = try PhaseTracker.start(progress_parent, "totals", 0);
         defer totals_phase.finish();
-        Model.accumulateTotals(summaries, &totals);
+        Model.accumulateTotals(summaries, totals);
         try Model.collectMissingModels(allocator, &missing_set, &totals.missing_pricing);
         break :blk totals_phase.elapsedMs();
     };
@@ -449,11 +495,6 @@ fn collectSummaryInternal(
         "phase.totals completed in {d:.2}ms (missing_pricing={d})",
         .{ totals_elapsed, totals.missing_pricing.items.len },
     );
-
-    std.log.info("phase.total runtime {d:.2}ms", .{nsToMs(total_timer.read())});
-    if (enable_progress) std.Progress.setStatus(.success);
-
-    return SummaryResult{ .builder = summary_builder, .totals = totals };
 }
 
 fn loadPricing(
