@@ -5,6 +5,11 @@ const timeutil = @import("time.zig");
 pub const MILLION = 1_000_000.0;
 pub const PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
+pub const UsageFieldVisibility = struct {
+    cache_creation: bool = true,
+    cache_read: bool = true,
+};
+
 pub const OutputFormat = enum {
     table,
     json,
@@ -192,20 +197,45 @@ pub fn writeUsageJsonFields(
     jw: *std.json.Stringify,
     usage: TokenUsage,
     display_input_override: ?u64,
+    visibility: UsageFieldVisibility,
 ) !void {
     const input_tokens = display_input_override orelse usage.input_tokens;
     try jw.objectField("inputTokens");
     try jw.write(input_tokens);
-    try jw.objectField("cacheCreationInputTokens");
-    try jw.write(usage.cache_creation_input_tokens);
-    try jw.objectField("cachedInputTokens");
-    try jw.write(usage.cached_input_tokens);
+    if (visibility.cache_creation) {
+        try jw.objectField("cacheCreationInputTokens");
+        try jw.write(usage.cache_creation_input_tokens);
+    }
+    if (visibility.cache_read) {
+        try jw.objectField("cachedInputTokens");
+        try jw.write(usage.cached_input_tokens);
+    }
     try jw.objectField("outputTokens");
     try jw.write(usage.output_tokens);
     try jw.objectField("reasoningOutputTokens");
     try jw.write(usage.reasoning_output_tokens);
     try jw.objectField("totalTokens");
     try jw.write(usage.total_tokens);
+}
+
+test "writeUsageJsonFields omits cache fields when hidden" {
+    const usage = TokenUsage{
+        .input_tokens = 10,
+        .cache_creation_input_tokens = 5,
+        .cached_input_tokens = 3,
+        .output_tokens = 7,
+        .reasoning_output_tokens = 0,
+        .total_tokens = 25,
+    };
+    var buffer = std.ArrayList(u8).empty;
+    defer buffer.deinit(std.testing.allocator);
+    var writer_state = io_util.ArrayWriter.init(&buffer, std.testing.allocator);
+    var stringify = std.json.Stringify{ .writer = writer_state.writer(), .options = .{} };
+    try stringify.beginObject();
+    try writeUsageJsonFields(&stringify, usage, null, .{ .cache_creation = false, .cache_read = false });
+    try stringify.endObject();
+    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "cacheCreationInputTokens") == null);
+    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "cachedInputTokens") == null);
 }
 
 pub const TokenUsageEvent = struct {
@@ -416,7 +446,7 @@ pub const SessionRecorder = struct {
 
     fn writeUsageObject(jw: *std.json.Stringify, usage: TokenUsage, cost: f64) !void {
         try jw.beginObject();
-        try writeUsageJsonFields(jw, usage, null);
+        try writeUsageJsonFields(jw, usage, null, .{});
         try jw.objectField("costUSD");
         try jw.write(cost);
         try jw.endObject();
@@ -542,7 +572,7 @@ pub const SessionRecorder = struct {
             try jw.write(self.session_file);
             try jw.objectField("directory");
             try jw.write(self.directory);
-            try writeUsageJsonFields(jw, self.usage, null);
+            try writeUsageJsonFields(jw, self.usage, null, .{});
             try jw.objectField("costUSD");
             try jw.write(self.cost_usd);
             try jw.objectField("models");
@@ -550,7 +580,7 @@ pub const SessionRecorder = struct {
             for (self.models.items) |model| {
                 try jw.objectField(model.name);
                 try jw.beginObject();
-                try writeUsageJsonFields(jw, model.usage, null);
+                try writeUsageJsonFields(jw, model.usage, null, .{});
                 try jw.objectField("costUSD");
                 try jw.write(model.cost_usd);
                 try jw.objectField("pricingAvailable");

@@ -3,20 +3,31 @@ const Model = @import("model.zig");
 
 pub const Renderer = struct {
     const Alignment = enum { left, right };
+    const ColumnId = enum {
+        date,
+        models,
+        input,
+        output,
+        cache_create,
+        cache_read,
+        total_tokens,
+        cost,
+    };
     const Column = struct {
+        id: ColumnId,
         header: []const u8,
         alignment: Alignment,
     };
 
     const table_columns = [_]Column{
-        .{ .header = "Date", .alignment = .left },
-        .{ .header = "Models", .alignment = .left },
-        .{ .header = "Input", .alignment = .right },
-        .{ .header = "Output", .alignment = .right },
-        .{ .header = "Cache Create", .alignment = .right },
-        .{ .header = "Cache Read", .alignment = .right },
-        .{ .header = "Total Tokens", .alignment = .right },
-        .{ .header = "Cost (USD)", .alignment = .right },
+        .{ .id = .date, .header = "Date", .alignment = .left },
+        .{ .id = .models, .header = "Models", .alignment = .left },
+        .{ .id = .input, .header = "Input", .alignment = .right },
+        .{ .id = .output, .header = "Output", .alignment = .right },
+        .{ .id = .cache_create, .header = "Cache Create", .alignment = .right },
+        .{ .id = .cache_read, .header = "Cache Read", .alignment = .right },
+        .{ .id = .total_tokens, .header = "Total Tokens", .alignment = .right },
+        .{ .id = .cost, .header = "Cost (USD)", .alignment = .right },
     };
 
     const column_count = table_columns.len;
@@ -26,15 +37,36 @@ pub const Renderer = struct {
         cells: [column_count][]const u8,
     };
 
+    fn usageFieldVisibilityFromTotals(totals: *const Model.SummaryTotals) Model.UsageFieldVisibility {
+        return .{
+            .cache_creation = totals.usage.cache_creation_input_tokens > 0,
+            .cache_read = totals.usage.cached_input_tokens > 0,
+        };
+    }
+
+    fn columnUsageFromVisibility(visibility: Model.UsageFieldVisibility) [column_count]bool {
+        var active = [_]bool{true} ** column_count;
+        active[@intFromEnum(ColumnId.cache_create)] = visibility.cache_creation;
+        active[@intFromEnum(ColumnId.cache_read)] = visibility.cache_read;
+        return active;
+    }
+
     pub fn writeJson(
         writer: *std.Io.Writer,
         summaries: []const Model.DailySummary,
         totals: *const Model.SummaryTotals,
         pretty: bool,
     ) !void {
+        const field_visibility = usageFieldVisibilityFromTotals(totals);
         const payload = Output{
-            .daily = SummaryArray{ .items = summaries },
-            .totals = TotalsView{ .totals = totals },
+            .daily = SummaryArray{
+                .items = summaries,
+                .field_visibility = field_visibility,
+            },
+            .totals = TotalsView{
+                .totals = totals,
+                .field_visibility = field_visibility,
+            },
         };
         var stringify = std.json.Stringify{
             .writer = writer,
@@ -55,37 +87,41 @@ pub const Renderer = struct {
             return;
         }
 
+        const field_visibility = usageFieldVisibilityFromTotals(totals);
+        const column_usage = columnUsageFromVisibility(field_visibility);
+
         var arena_state = std.heap.ArenaAllocator.init(allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
 
-        var widths: [column_count]usize = undefined;
-        inline for (table_columns, 0..) |column, idx| {
+        var widths = [_]usize{0} ** column_count;
+        for (table_columns, 0..) |column, idx| {
+            if (!column_usage[idx]) continue;
             widths[idx] = column.header.len;
         }
 
         var rows = try arena.alloc(Row, summaries.len);
         for (summaries, 0..) |*summary, idx| {
             rows[idx] = try formatRow(arena, summary);
-            updateWidths(&widths, rows[idx].cells[0..]);
+            updateWidths(&widths, rows[idx].cells[0..], column_usage[0..]);
         }
 
         const totals_row = try formatTotalsRow(arena, totals);
-        updateWidths(&widths, totals_row.cells[0..]);
+        updateWidths(&widths, totals_row.cells[0..], column_usage[0..]);
 
-        try writeRule(writer, widths[0..], '-');
+        try writeRule(writer, widths[0..], column_usage[0..], '-');
         var header_cells: [column_count][]const u8 = undefined;
-        inline for (table_columns, 0..) |column, idx| {
+        for (table_columns, 0..) |column, idx| {
             header_cells[idx] = column.header;
         }
-        try writeRow(writer, widths[0..], header_cells[0..], table_columns[0..]);
-        try writeRule(writer, widths[0..], '=');
+        try writeRow(writer, widths[0..], header_cells[0..], table_columns[0..], column_usage[0..]);
+        try writeRule(writer, widths[0..], column_usage[0..], '=');
         for (rows) |row| {
-            try writeRow(writer, widths[0..], row.cells[0..], table_columns[0..]);
+            try writeRow(writer, widths[0..], row.cells[0..], table_columns[0..], column_usage[0..]);
         }
-        try writeRule(writer, widths[0..], '-');
-        try writeRow(writer, widths[0..], totals_row.cells[0..], table_columns[0..]);
-        try writeRule(writer, widths[0..], '-');
+        try writeRule(writer, widths[0..], column_usage[0..], '-');
+        try writeRow(writer, widths[0..], totals_row.cells[0..], table_columns[0..], column_usage[0..]);
+        try writeRule(writer, widths[0..], column_usage[0..], '-');
 
         if (totals.missing_pricing.items.len > 0) {
             try writer.writeAll("\nMissing pricing entries:\n");
@@ -102,11 +138,15 @@ pub const Renderer = struct {
 
     const SummaryArray = struct {
         items: []const Model.DailySummary,
+        field_visibility: Model.UsageFieldVisibility,
 
         pub fn jsonStringify(self: SummaryArray, jw: *std.json.Stringify) !void {
             try jw.beginArray();
             for (self.items) |*summary| {
-                try jw.write(DailySummaryView{ .summary = summary });
+                try jw.write(DailySummaryView{
+                    .summary = summary,
+                    .field_visibility = self.field_visibility,
+                });
             }
             try jw.endArray();
         }
@@ -114,11 +154,12 @@ pub const Renderer = struct {
 
     const TotalsView = struct {
         totals: *const Model.SummaryTotals,
+        field_visibility: Model.UsageFieldVisibility,
 
         pub fn jsonStringify(self: TotalsView, jw: *std.json.Stringify) !void {
             const totals = self.totals;
             try jw.beginObject();
-            try Model.writeUsageJsonFields(jw, totals.usage, totals.display_input_tokens);
+            try Model.writeUsageJsonFields(jw, totals.usage, totals.display_input_tokens, self.field_visibility);
             try jw.objectField("costUSD");
             try jw.write(totals.cost_usd);
             try jw.objectField("missingPricing");
@@ -129,6 +170,7 @@ pub const Renderer = struct {
 
     const DailySummaryView = struct {
         summary: *const Model.DailySummary,
+        field_visibility: Model.UsageFieldVisibility,
 
         pub fn jsonStringify(self: DailySummaryView, jw: *std.json.Stringify) !void {
             const summary = self.summary;
@@ -137,11 +179,14 @@ pub const Renderer = struct {
             try jw.write(summary.display_date);
             try jw.objectField("isoDate");
             try jw.write(summary.iso_date);
-            try Model.writeUsageJsonFields(jw, summary.usage, summary.display_input_tokens);
+            try Model.writeUsageJsonFields(jw, summary.usage, summary.display_input_tokens, self.field_visibility);
             try jw.objectField("costUSD");
             try jw.write(summary.cost_usd);
             try jw.objectField("models");
-            try jw.write(ModelMapView{ .models = summary.models.items });
+            try jw.write(ModelMapView{
+                .models = summary.models.items,
+                .field_visibility = self.field_visibility,
+            });
             try jw.objectField("missingPricing");
             try jw.write(summary.missing_pricing.items);
             try jw.endObject();
@@ -150,13 +195,14 @@ pub const Renderer = struct {
 
     const ModelMapView = struct {
         models: []const Model.ModelSummary,
+        field_visibility: Model.UsageFieldVisibility,
 
         pub fn jsonStringify(self: ModelMapView, jw: *std.json.Stringify) !void {
             try jw.beginObject();
             for (self.models) |*model| {
                 try jw.objectField(model.name);
                 try jw.beginObject();
-                try Model.writeUsageJsonFields(jw, model.usage, model.display_input_tokens);
+                try Model.writeUsageJsonFields(jw, model.usage, model.display_input_tokens, self.field_visibility);
                 try jw.objectField("costUSD");
                 try jw.write(model.cost_usd);
                 try jw.objectField("pricingAvailable");
@@ -208,15 +254,26 @@ pub const Renderer = struct {
         return usage.input_tokens;
     }
 
-    fn updateWidths(widths: *[column_count]usize, cells: []const []const u8) void {
+    fn updateWidths(
+        widths: *[column_count]usize,
+        cells: []const []const u8,
+        column_usage: []const bool,
+    ) void {
         for (cells, 0..) |cell, idx| {
+            if (!column_usage[idx]) continue;
             if (cell.len > widths[idx]) widths[idx] = cell.len;
         }
     }
 
-    fn writeRule(writer: *std.Io.Writer, widths: []const usize, ch: u8) !void {
+    fn writeRule(
+        writer: *std.Io.Writer,
+        widths: []const usize,
+        column_usage: []const bool,
+        ch: u8,
+    ) !void {
         try writer.writeAll("+");
-        for (widths) |width| {
+        for (widths, 0..) |width, idx| {
+            if (!column_usage[idx]) continue;
             try writer.splatByteAll(ch, width + 2);
             try writer.writeAll("+");
         }
@@ -228,9 +285,11 @@ pub const Renderer = struct {
         widths: []const usize,
         cells: []const []const u8,
         columns: []const Column,
+        column_usage: []const bool,
     ) !void {
         try writer.writeAll("|");
         for (cells, 0..) |cell, idx| {
+            if (!column_usage[idx]) continue;
             const width = widths[idx];
             const alignment = columns[idx].alignment;
             const padding = if (width > cell.len) width - cell.len else 0;
