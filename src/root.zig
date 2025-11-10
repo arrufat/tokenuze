@@ -249,7 +249,7 @@ fn describeSelectedProviders(selection: ProviderSelection, buffer: []u8) Provide
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     const joined = std.mem.join(fba.allocator(), ", ", selected[0..count]) catch {
         const placeholder = "(truncated)";
-        if (buffer.len == 0) return .{ .names = "(none)", .count = count };
+        if (buffer.len == 0) return .{ .names = "", .count = count };
         const copy_len = @min(placeholder.len, buffer.len);
         std.mem.copyForwards(u8, buffer[0..copy_len], placeholder[0..copy_len]);
         return .{ .names = buffer[0..copy_len], .count = count };
