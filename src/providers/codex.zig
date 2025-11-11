@@ -219,7 +219,7 @@ fn parseObjectField(
     key: []const u8,
 ) !void {
     if (std.mem.eql(u8, key, "type")) {
-        var value = try readStringToken(allocator, reader);
+        var value = try provider.jsonReadStringToken(allocator, reader);
         defer value.deinit(allocator);
         const type_slice = value.view();
         if (std.mem.eql(u8, type_slice, "turn_context")) {
@@ -233,7 +233,7 @@ fn parseObjectField(
     }
 
     if (std.mem.eql(u8, key, "timestamp")) {
-        replaceToken(context.timestamp_token, allocator, try readStringToken(allocator, reader));
+        replaceToken(context.timestamp_token, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
 
@@ -262,7 +262,7 @@ fn parsePayload(
 
     _ = try reader.next();
 
-    try walkObject(allocator, reader, payload_result, handlePayloadField);
+    try walkObject(allocator, reader, payload_result, parsePayloadField);
 }
 
 fn parsePayloadField(
@@ -274,7 +274,7 @@ fn parsePayloadField(
     if (try parseSharedPayloadField(allocator, reader, key, payload_result)) return;
 
     if (std.mem.eql(u8, key, "type")) {
-        replaceToken(&payload_result.payload_type, allocator, try readStringToken(allocator, reader));
+        replaceToken(&payload_result.payload_type, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
 
@@ -284,15 +284,6 @@ fn parsePayloadField(
     }
 
     try reader.skipValue();
-}
-
-fn handlePayloadField(
-    payload_result: *PayloadResult,
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    key: []const u8,
-) !void {
-    try parsePayloadField(payload_result, allocator, reader, key);
 }
 
 fn parseInfoObject(
@@ -312,7 +303,7 @@ fn parseInfoObject(
 
     _ = try reader.next();
 
-    try walkObject(allocator, reader, payload_result, handleInfoField);
+    try walkObject(allocator, reader, payload_result, parseInfoField);
 }
 
 fn parseInfoField(
@@ -324,72 +315,15 @@ fn parseInfoField(
     if (try parseSharedPayloadField(allocator, reader, key, payload_result)) return;
 
     if (std.mem.eql(u8, key, "last_token_usage")) {
-        payload_result.last_usage = try parseUsageObject(allocator, reader);
+        payload_result.last_usage = try provider.jsonParseUsageObject(allocator, reader);
         return;
     }
     if (std.mem.eql(u8, key, "total_token_usage")) {
-        payload_result.total_usage = try parseUsageObject(allocator, reader);
+        payload_result.total_usage = try provider.jsonParseUsageObject(allocator, reader);
         return;
     }
 
     try reader.skipValue();
-}
-
-fn handleInfoField(
-    payload_result: *PayloadResult,
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    key: []const u8,
-) !void {
-    try parseInfoField(payload_result, allocator, reader, key);
-}
-
-fn parseUsageObject(
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-) !?RawUsage {
-    const peek = try reader.peekNextTokenType();
-    if (peek == .null) {
-        _ = try reader.next();
-        return null;
-    }
-    if (peek != .object_begin) {
-        try reader.skipValue();
-        return null;
-    }
-
-    _ = try reader.next();
-
-    var accumulator = model.UsageAccumulator{};
-
-    while (true) {
-        switch (try reader.peekNextTokenType()) {
-            .object_end => {
-                _ = try reader.next();
-                return accumulator.finalize();
-            },
-            .string => {
-                var key = try TokenSlice.fromString(allocator, reader);
-                defer key.deinit(allocator);
-                try parseUsageField(allocator, reader, key.view(), &accumulator);
-            },
-            else => return error.UnexpectedToken,
-        }
-    }
-}
-
-fn parseUsageField(
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    key: []const u8,
-    accumulator: *model.UsageAccumulator,
-) !void {
-    const field = model.usageFieldForKey(key) orelse {
-        try reader.skipValue();
-        return;
-    };
-    const value = try parseU64Value(allocator, reader);
-    accumulator.applyField(field, value);
 }
 
 fn parseModelValue(
@@ -411,7 +345,7 @@ fn parseModelValue(
                         var key = try TokenSlice.fromString(allocator, reader);
                         defer key.deinit(allocator);
                         if (isModelKey(key.view())) {
-                            const maybe_token = try readOptionalStringToken(allocator, reader);
+                            const maybe_token = try provider.jsonReadOptionalStringToken(allocator, reader);
                             if (maybe_token) |token| captureModelToken(storage, allocator, token);
                         } else {
                             try parseModelValue(allocator, reader, storage);
@@ -447,7 +381,7 @@ fn parseSharedPayloadField(
     payload_result: *PayloadResult,
 ) !bool {
     if (isModelKey(key)) {
-        const maybe_token = try readOptionalStringToken(allocator, reader);
+        const maybe_token = try provider.jsonReadOptionalStringToken(allocator, reader);
         if (maybe_token) |token| captureModelToken(&payload_result.model, allocator, token);
         return true;
     }
@@ -456,26 +390,6 @@ fn parseSharedPayloadField(
         return true;
     }
     return false;
-}
-
-fn readStringToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !TokenSlice {
-    return TokenSlice.fromString(allocator, reader);
-}
-
-fn readOptionalStringToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !?TokenSlice {
-    const peek = try reader.peekNextTokenType();
-    switch (peek) {
-        .null => {
-            _ = try reader.next();
-            return null;
-        },
-        .string => return try readStringToken(allocator, reader),
-        else => return error.UnexpectedToken,
-    }
-}
-
-fn readNumberToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !TokenSlice {
-    return TokenSlice.fromNumber(allocator, reader);
 }
 
 fn replaceToken(dest: *?TokenSlice, allocator: std.mem.Allocator, token: TokenSlice) void {
@@ -520,22 +434,6 @@ fn walkObject(
             },
             else => return error.UnexpectedToken,
         }
-    }
-}
-
-fn parseU64Value(allocator: std.mem.Allocator, reader: *std.json.Reader) !u64 {
-    const peek = try reader.peekNextTokenType();
-    switch (peek) {
-        .null => {
-            _ = try reader.next();
-            return 0;
-        },
-        .number => {
-            var number = try readNumberToken(allocator, reader);
-            defer number.deinit(allocator);
-            return model.parseTokenNumber(number.view());
-        },
-        else => return error.UnexpectedToken,
     }
 }
 

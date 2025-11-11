@@ -220,6 +220,20 @@ pub fn overrideSessionLabelFromValue(
     }
 }
 
+pub fn overrideSessionLabelFromSlice(
+    allocator: std.mem.Allocator,
+    session_label: *[]const u8,
+    overridden: ?*bool,
+    slice: []const u8,
+) void {
+    if (overridden) |flag| if (flag.*) return;
+    const duplicate = duplicateNonEmpty(allocator, slice) catch null;
+    if (duplicate) |dup| {
+        session_label.* = dup;
+        if (overridden) |flag| flag.* = true;
+    }
+}
+
 pub const JsonFileOptions = struct {
     limit: std.Io.Limit = std.Io.Limit.limited(32 * 1024 * 1024),
     read_error_message: []const u8 = "failed to read session file",
@@ -600,6 +614,178 @@ pub const JsonTokenSlice = union(enum) {
         };
     }
 };
+
+pub fn jsonReadStringToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
+    return JsonTokenSlice.fromString(allocator, reader);
+}
+
+pub fn jsonReadOptionalStringToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !?JsonTokenSlice {
+    const peek = try reader.peekNextTokenType();
+    switch (peek) {
+        .null => {
+            _ = try reader.next();
+            return null;
+        },
+        .string => return try jsonReadStringToken(allocator, reader),
+        else => return error.UnexpectedToken,
+    }
+}
+
+pub fn jsonReadNumberToken(allocator: std.mem.Allocator, reader: *std.json.Reader) !JsonTokenSlice {
+    return JsonTokenSlice.fromNumber(allocator, reader);
+}
+
+pub fn jsonParseU64Value(allocator: std.mem.Allocator, reader: *std.json.Reader) !u64 {
+    const peek = try reader.peekNextTokenType();
+    switch (peek) {
+        .null => {
+            _ = try reader.next();
+            return 0;
+        },
+        .number => {
+            var number = try jsonReadNumberToken(allocator, reader);
+            defer number.deinit(allocator);
+            return Model.parseTokenNumber(number.view());
+        },
+        else => return error.UnexpectedToken,
+    }
+}
+
+pub fn jsonParseUsageObject(
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+) !?Model.RawTokenUsage {
+    const peek = try reader.peekNextTokenType();
+    if (peek == .null) {
+        _ = try reader.next();
+        return null;
+    }
+    if (peek != .object_begin) {
+        try reader.skipValue();
+        return null;
+    }
+
+    _ = try reader.next();
+
+    var accumulator = Model.UsageAccumulator{};
+
+    while (true) {
+        switch (try reader.peekNextTokenType()) {
+            .object_end => {
+                _ = try reader.next();
+                return accumulator.finalize();
+            },
+            .string => {
+                var key = try JsonTokenSlice.fromString(allocator, reader);
+                defer key.deinit(allocator);
+                try jsonParseUsageField(allocator, reader, key.view(), &accumulator);
+            },
+            else => return error.UnexpectedToken,
+        }
+    }
+}
+
+pub fn jsonParseUsageObjectWithDescriptors(
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    descriptors: []const UsageFieldDescriptor,
+) !?Model.RawTokenUsage {
+    const peek = try reader.peekNextTokenType();
+    if (peek == .null) {
+        _ = try reader.next();
+        return null;
+    }
+    if (peek != .object_begin) {
+        try reader.skipValue();
+        return null;
+    }
+
+    _ = try reader.next();
+
+    var accumulator = Model.UsageAccumulator{};
+
+    while (true) {
+        switch (try reader.peekNextTokenType()) {
+            .object_end => {
+                _ = try reader.next();
+                return accumulator.finalize();
+            },
+            .string => {
+                var key = try JsonTokenSlice.fromString(allocator, reader);
+                defer key.deinit(allocator);
+                try jsonApplyDescriptorField(allocator, reader, key.view(), descriptors, &accumulator);
+            },
+            else => return error.UnexpectedToken,
+        }
+    }
+}
+
+fn jsonParseUsageField(
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    key: []const u8,
+    accumulator: *Model.UsageAccumulator,
+) !void {
+    const field = Model.usageFieldForKey(key) orelse {
+        try reader.skipValue();
+        return;
+    };
+    const value = try jsonParseU64Value(allocator, reader);
+    accumulator.applyField(field, value);
+}
+
+fn jsonApplyDescriptorField(
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    key: []const u8,
+    descriptors: []const UsageFieldDescriptor,
+    accumulator: *Model.UsageAccumulator,
+) !void {
+    var matched = false;
+    var value_parsed = false;
+    var parsed_value: u64 = 0;
+
+    for (descriptors) |descriptor| {
+        if (!std.mem.eql(u8, descriptor.key, key)) continue;
+        matched = true;
+        if (!value_parsed) {
+            parsed_value = try jsonParseU64Value(allocator, reader);
+            value_parsed = true;
+        }
+        switch (descriptor.mode) {
+            .set => accumulator.applyField(descriptor.field, parsed_value),
+            .add => accumulator.addField(descriptor.field, parsed_value),
+        }
+    }
+
+    if (!matched) {
+        try reader.skipValue();
+    } else if (!value_parsed) {
+        return error.UnexpectedToken;
+    }
+}
+
+pub fn jsonWalkObject(
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    context: anytype,
+    comptime handler: fn (@TypeOf(context), std.mem.Allocator, *std.json.Reader, []const u8) anyerror!void,
+) !void {
+    while (true) {
+        switch (try reader.peekNextTokenType()) {
+            .object_end => {
+                _ = try reader.next();
+                return;
+            },
+            .string => {
+                var key = try JsonTokenSlice.fromString(allocator, reader);
+                defer key.deinit(allocator);
+                try handler(context, allocator, reader, key.view());
+            },
+            else => return error.UnexpectedToken,
+        }
+    }
+}
 
 fn readNumberValue(allocator: std.mem.Allocator, reader: *std.json.Reader) !f64 {
     var buffered = try JsonTokenSlice.fromNumber(allocator, reader);

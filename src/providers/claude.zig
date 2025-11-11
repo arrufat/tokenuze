@@ -5,6 +5,7 @@ const provider = @import("provider.zig");
 const RawUsage = model.RawTokenUsage;
 const MessageDeduper = provider.MessageDeduper;
 const ModelState = provider.ModelState;
+const TokenSlice = provider.JsonTokenSlice;
 
 const CLAUDE_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
     .{ .key = "input_tokens", .field = .input_tokens },
@@ -30,6 +31,35 @@ const ProviderExports = provider.makeProvider(.{
 
 pub const collect = ProviderExports.collect;
 pub const loadPricingData = ProviderExports.loadPricingData;
+
+const ClaudeMessage = struct {
+    id: ?TokenSlice = null,
+    model: ?TokenSlice = null,
+    usage: ?RawUsage = null,
+
+    fn deinit(self: *ClaudeMessage, allocator: std.mem.Allocator) void {
+        if (self.id) |*tok| tok.deinit(allocator);
+        if (self.model) |*tok| tok.deinit(allocator);
+        self.* = .{};
+    }
+};
+
+const ClaudeRecord = struct {
+    session_id: ?TokenSlice = null,
+    timestamp: ?TokenSlice = null,
+    request_id: ?TokenSlice = null,
+    type_token: ?TokenSlice = null,
+    message: ClaudeMessage = .{},
+
+    fn deinit(self: *ClaudeRecord, allocator: std.mem.Allocator) void {
+        if (self.session_id) |*tok| tok.deinit(allocator);
+        if (self.timestamp) |*tok| tok.deinit(allocator);
+        if (self.request_id) |*tok| tok.deinit(allocator);
+        if (self.type_token) |*tok| tok.deinit(allocator);
+        self.message.deinit(allocator);
+        self.* = .{};
+    }
+};
 
 fn parseClaudeSessionFile(
     allocator: std.mem.Allocator,
@@ -83,115 +113,167 @@ const ClaudeLineHandler = struct {
     model_state: *ModelState,
 
     fn handle(self: *ClaudeLineHandler, line: []const u8, line_index: usize) !void {
-        try handleClaudeLine(self, line, line_index);
+        self.processLine(line) catch |err| {
+            std.log.warn(
+                "{s}: failed to parse claude session file '{s}' line {d} ({s})",
+                .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
+            );
+        };
+    }
+
+    fn processLine(self: *ClaudeLineHandler, line: []const u8) !void {
+        const trimmed = std.mem.trim(u8, line, " \t\r\n");
+        if (trimmed.len == 0) return;
+
+        var slice_reader = std.Io.Reader.fixed(trimmed);
+        var json_reader = std.json.Reader.init(self.allocator, &slice_reader);
+        defer json_reader.deinit();
+
+        if ((try json_reader.next()) != .object_begin) return;
+
+        var record = ClaudeRecord{};
+        defer record.deinit(self.allocator);
+
+        try provider.jsonWalkObject(self.allocator, &json_reader, &record, parseClaudeRecordField);
+
+        const trailing = try json_reader.next();
+        if (trailing != .end_of_document) try json_reader.skipValue();
+
+        try self.emitEvent(&record);
+    }
+
+    fn emitEvent(self: *ClaudeLineHandler, record: *ClaudeRecord) !void {
+        if (record.session_id) |token| {
+            provider.overrideSessionLabelFromSlice(
+                self.allocator,
+                self.session_label,
+                self.session_label_overridden,
+                token.view(),
+            );
+        }
+
+        const type_token = record.type_token orelse return;
+        if (!std.mem.eql(u8, type_token.view(), "assistant")) return;
+
+        if (!try shouldEmitClaudeMessage(self.deduper, record.request_id, record.message.id)) {
+            return;
+        }
+
+        const usage_raw = record.message.usage orelse return;
+        const timestamp_token = record.timestamp orelse return;
+        const timestamp_info = try provider.timestampFromSlice(
+            self.allocator,
+            timestamp_token.view(),
+            self.timezone_offset_minutes,
+        ) orelse return;
+
+        const resolved_model = (try self.ctx.requireModel(self.allocator, self.model_state, record.message.model)) orelse return;
+
+        var usage = model.TokenUsage.fromRaw(usage_raw);
+        if (usage.input_tokens == 0 and usage.cached_input_tokens == 0 and usage.output_tokens == 0 and usage.reasoning_output_tokens == 0) {
+            return;
+        }
+
+        const event = model.TokenUsageEvent{
+            .session_id = self.session_label.*,
+            .timestamp = timestamp_info.text,
+            .local_iso_date = timestamp_info.local_iso_date,
+            .model = resolved_model.name,
+            .usage = usage,
+            .is_fallback = resolved_model.is_fallback,
+            .display_input_tokens = self.ctx.computeDisplayInput(usage),
+        };
+        try self.events.append(self.allocator, event);
     }
 };
 
-fn handleClaudeLine(
-    handler: *ClaudeLineHandler,
-    line: []const u8,
-    line_index: usize,
+fn parseClaudeRecordField(
+    record: *ClaudeRecord,
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    key: []const u8,
 ) !void {
-    const ctx = handler.ctx;
-    var parsed_doc = std.json.parseFromSlice(std.json.Value, handler.allocator, line, .{}) catch |err| {
-        std.log.warn(
-            "{s}: failed to parse claude session file '{s}' line {d} ({s})",
-            .{ ctx.provider_name, handler.file_path, line_index, @errorName(err) },
-        );
+    if (std.mem.eql(u8, key, "sessionId")) {
+        replaceToken(&record.session_id, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
-    };
-    defer parsed_doc.deinit();
+    }
+    if (std.mem.eql(u8, key, "timestamp")) {
+        replaceToken(&record.timestamp, allocator, try provider.jsonReadStringToken(allocator, reader));
+        return;
+    }
+    if (std.mem.eql(u8, key, "requestId")) {
+        replaceToken(&record.request_id, allocator, try provider.jsonReadStringToken(allocator, reader));
+        return;
+    }
+    if (std.mem.eql(u8, key, "type")) {
+        replaceToken(&record.type_token, allocator, try provider.jsonReadStringToken(allocator, reader));
+        return;
+    }
+    if (std.mem.eql(u8, key, "message")) {
+        try parseClaudeMessageObject(record, allocator, reader);
+        return;
+    }
 
-    const record = switch (parsed_doc.value) {
-        .object => |obj| obj,
-        else => return,
-    };
-
-    provider.overrideSessionLabelFromValue(
-        handler.allocator,
-        handler.session_label,
-        handler.session_label_overridden,
-        record.get("sessionId"),
-    );
-
-    const message_value = record.get("message") orelse return;
-    const message_obj = switch (message_value) {
-        .object => |obj| obj,
-        else => return,
-    };
-
-    try emitClaudeEvent(handler, record, message_obj);
+    try reader.skipValue();
 }
 
-fn emitClaudeEvent(
-    handler: *ClaudeLineHandler,
-    record: std.json.ObjectMap,
-    message_obj: std.json.ObjectMap,
+fn parseClaudeMessageObject(
+    record: *ClaudeRecord,
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
 ) !void {
-    const ctx = handler.ctx;
-    const type_value = record.get("type") orelse return;
-    const type_slice = switch (type_value) {
-        .string => |slice| slice,
-        else => return,
-    };
-    if (!std.mem.eql(u8, type_slice, "assistant")) return;
-
-    if (!try shouldEmitClaudeMessage(handler.deduper, record, message_obj)) {
+    const peek = try reader.peekNextTokenType();
+    if (peek == .null) {
+        _ = try reader.next();
+        return;
+    }
+    if (peek != .object_begin) {
+        try reader.skipValue();
         return;
     }
 
-    const usage_value = message_obj.get("usage") orelse return;
-    const usage_obj = switch (usage_value) {
-        .object => |obj| obj,
-        else => return,
-    };
+    _ = try reader.next();
+    try provider.jsonWalkObject(allocator, reader, &record.message, parseClaudeMessageField);
+}
 
-    const timestamp_info = try provider.timestampFromValue(handler.allocator, handler.timezone_offset_minutes, record.get("timestamp")) orelse return;
-
-    const message_model = message_obj.get("model");
-    const resolved_model = (try ctx.requireModel(handler.allocator, handler.model_state, message_model)) orelse return;
-
-    const raw = parseClaudeUsage(usage_obj);
-    const usage = model.TokenUsage.fromRaw(raw);
-    if (usage.input_tokens == 0 and usage.cached_input_tokens == 0 and usage.output_tokens == 0 and usage.reasoning_output_tokens == 0) {
+fn parseClaudeMessageField(
+    message: *ClaudeMessage,
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    key: []const u8,
+) !void {
+    if (std.mem.eql(u8, key, "id")) {
+        replaceToken(&message.id, allocator, try provider.jsonReadStringToken(allocator, reader));
+        return;
+    }
+    if (std.mem.eql(u8, key, "model")) {
+        replaceToken(&message.model, allocator, try provider.jsonReadStringToken(allocator, reader));
+        return;
+    }
+    if (std.mem.eql(u8, key, "usage")) {
+        message.usage = try provider.jsonParseUsageObjectWithDescriptors(allocator, reader, CLAUDE_USAGE_FIELDS[0..]);
         return;
     }
 
-    const event = model.TokenUsageEvent{
-        .session_id = handler.session_label.*,
-        .timestamp = timestamp_info.text,
-        .local_iso_date = timestamp_info.local_iso_date,
-        .model = resolved_model.name,
-        .usage = usage,
-        .is_fallback = resolved_model.is_fallback,
-        .display_input_tokens = ctx.computeDisplayInput(usage),
-    };
-    try handler.events.append(handler.allocator, event);
+    try reader.skipValue();
 }
 
 fn shouldEmitClaudeMessage(
     deduper: ?*MessageDeduper,
-    record: std.json.ObjectMap,
-    message_obj: std.json.ObjectMap,
+    request_token: ?TokenSlice,
+    message_token: ?TokenSlice,
 ) !bool {
     const dedupe = deduper orelse return true;
-    const id_value = message_obj.get("id") orelse return true;
-    const id_slice = switch (id_value) {
-        .string => |slice| slice,
-        else => return true,
-    };
-    const request_value = record.get("requestId") orelse return true;
-    const request_slice = switch (request_value) {
-        .string => |slice| slice,
-        else => return true,
-    };
-    var hash = std.hash.Wyhash.hash(0, id_slice);
-    hash = std.hash.Wyhash.hash(hash, request_slice);
+    const message_id = message_token orelse return true;
+    const request_id = request_token orelse return true;
+    var hash = std.hash.Wyhash.hash(0, message_id.view());
+    hash = std.hash.Wyhash.hash(hash, request_id.view());
     return try dedupe.mark(hash);
 }
 
-fn parseClaudeUsage(usage_obj: std.json.ObjectMap) RawUsage {
-    return provider.parseUsageObject(usage_obj, CLAUDE_USAGE_FIELDS[0..]);
+fn replaceToken(dest: *?TokenSlice, allocator: std.mem.Allocator, token: TokenSlice) void {
+    if (dest.*) |*existing| existing.deinit(allocator);
+    dest.* = token;
 }
 
 test "claude parser emits assistant usage events and respects overrides" {
