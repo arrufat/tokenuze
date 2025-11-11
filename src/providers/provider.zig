@@ -635,6 +635,15 @@ pub fn jsonReadNumberToken(allocator: std.mem.Allocator, reader: *std.json.Reade
     return JsonTokenSlice.fromNumber(allocator, reader);
 }
 
+pub fn replaceJsonToken(
+    dest: *?JsonTokenSlice,
+    allocator: std.mem.Allocator,
+    token: JsonTokenSlice,
+) void {
+    if (dest.*) |*existing| existing.deinit(allocator);
+    dest.* = token;
+}
+
 pub fn jsonParseU64Value(allocator: std.mem.Allocator, reader: *std.json.Reader) !u64 {
     const peek = try reader.peekNextTokenType();
     switch (peek) {

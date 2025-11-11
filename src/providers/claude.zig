@@ -194,19 +194,19 @@ fn parseClaudeRecordField(
     key: []const u8,
 ) !void {
     if (std.mem.eql(u8, key, "sessionId")) {
-        replaceToken(&record.session_id, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&record.session_id, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "timestamp")) {
-        replaceToken(&record.timestamp, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&record.timestamp, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "requestId")) {
-        replaceToken(&record.request_id, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&record.request_id, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "type")) {
-        replaceToken(&record.type_token, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&record.type_token, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "message")) {
@@ -243,11 +243,11 @@ fn parseClaudeMessageField(
     key: []const u8,
 ) !void {
     if (std.mem.eql(u8, key, "id")) {
-        replaceToken(&message.id, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&message.id, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "model")) {
-        replaceToken(&message.model, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&message.model, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "usage")) {
@@ -269,11 +269,6 @@ fn shouldEmitClaudeMessage(
     var hash = std.hash.Wyhash.hash(0, message_id.view());
     hash = std.hash.Wyhash.hash(hash, request_id.view());
     return try dedupe.mark(hash);
-}
-
-fn replaceToken(dest: *?TokenSlice, allocator: std.mem.Allocator, token: TokenSlice) void {
-    if (dest.*) |*existing| existing.deinit(allocator);
-    dest.* = token;
 }
 
 test "claude parser emits assistant usage events and respects overrides" {

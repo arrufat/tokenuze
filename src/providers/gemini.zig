@@ -194,11 +194,11 @@ fn parseGeminiMessageField(
     key: []const u8,
 ) !void {
     if (std.mem.eql(u8, key, "timestamp")) {
-        replaceToken(&message.timestamp, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&message.timestamp, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "model")) {
-        replaceToken(&message.model, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&message.model, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
     if (std.mem.eql(u8, key, "tokens")) {
@@ -244,11 +244,6 @@ fn emitGeminiMessage(state: *GeminiParseState, message: *GeminiMessage) !void {
         .display_input_tokens = state.ctx.computeDisplayInput(delta),
     };
     try state.events.append(state.allocator, event);
-}
-
-fn replaceToken(dest: *?TokenSlice, allocator: std.mem.Allocator, token: TokenSlice) void {
-    if (dest.*) |*existing| existing.deinit(allocator);
-    dest.* = token;
 }
 
 test "gemini parser converts message totals into usage deltas" {

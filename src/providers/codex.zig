@@ -233,7 +233,7 @@ fn parseObjectField(
     }
 
     if (std.mem.eql(u8, key, "timestamp")) {
-        replaceToken(context.timestamp_token, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(context.timestamp_token, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
 
@@ -274,7 +274,7 @@ fn parsePayloadField(
     if (try parseSharedPayloadField(allocator, reader, key, payload_result)) return;
 
     if (std.mem.eql(u8, key, "type")) {
-        replaceToken(&payload_result.payload_type, allocator, try provider.jsonReadStringToken(allocator, reader));
+        provider.replaceJsonToken(&payload_result.payload_type, allocator, try provider.jsonReadStringToken(allocator, reader));
         return;
     }
 
@@ -387,11 +387,6 @@ fn parseSharedPayloadField(
         return true;
     }
     return false;
-}
-
-fn replaceToken(dest: *?TokenSlice, allocator: std.mem.Allocator, token: TokenSlice) void {
-    if (dest.*) |*existing| existing.deinit(allocator);
-    dest.* = token;
 }
 
 fn captureModelToken(dest: *?TokenSlice, allocator: std.mem.Allocator, token: TokenSlice) void {
