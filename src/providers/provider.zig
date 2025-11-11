@@ -875,6 +875,27 @@ pub fn usageIsZero(usage: Model.TokenUsage) bool {
         usage.reasoning_output_tokens == 0;
 }
 
+pub fn parseJsonLine(
+    allocator: std.mem.Allocator,
+    line: []const u8,
+    context: anytype,
+    comptime handler: fn (@TypeOf(context), std.mem.Allocator, *std.json.Reader) anyerror!void,
+) !void {
+    const trimmed = std.mem.trim(u8, line, " \t\r\n");
+    if (trimmed.len == 0) return;
+
+    var slice_reader = std.Io.Reader.fixed(trimmed);
+    var json_reader = std.json.Reader.init(allocator, &slice_reader);
+    defer json_reader.deinit();
+
+    if ((try json_reader.next()) != .object_begin) return;
+
+    try handler(context, allocator, &json_reader);
+
+    const trailing = try json_reader.next();
+    if (trailing != .end_of_document) try json_reader.skipValue();
+}
+
 fn readNumberValue(allocator: std.mem.Allocator, reader: *std.json.Reader) !f64 {
     var buffered = try JsonTokenSlice.fromNumber(allocator, reader);
     defer buffered.deinit(allocator);

@@ -105,10 +105,7 @@ const CodexLineHandler = struct {
     timezone_offset_minutes: i32,
 
     fn handle(self: *CodexLineHandler, line: []const u8, line_index: usize) !void {
-        const trimmed = std.mem.trim(u8, line, " \t\r\n");
-        if (trimmed.len == 0) return;
-
-        self.processSessionLine(trimmed) catch |err| {
+        provider.parseJsonLine(self.allocator, line, self, processSessionLine) catch |err| {
             std.log.warn(
                 "{s}: failed to parse codex session file '{s}' line {d} ({s})",
                 .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
@@ -116,17 +113,11 @@ const CodexLineHandler = struct {
         };
     }
 
-    fn processSessionLine(self: *CodexLineHandler, line: []const u8) !void {
-        var slice_reader = std.Io.Reader.fixed(line);
-        var json_reader = std.json.Reader.init(self.allocator, &slice_reader);
-        defer json_reader.deinit();
-
-        if ((try json_reader.next()) != .object_begin) return;
-
+    fn processSessionLine(self: *CodexLineHandler, allocator: std.mem.Allocator, reader: *std.json.Reader) !void {
         var payload_result = PayloadResult{};
-        defer payload_result.deinit(self.allocator);
+        defer payload_result.deinit(allocator);
         var timestamp_token: ?TokenSlice = null;
-        defer if (timestamp_token) |*tok| tok.deinit(self.allocator);
+        defer if (timestamp_token) |*tok| tok.deinit(allocator);
         var is_turn_context = false;
         var is_event_msg = false;
 
@@ -136,10 +127,7 @@ const CodexLineHandler = struct {
             .is_turn_context = &is_turn_context,
             .is_event_msg = &is_event_msg,
         };
-        try provider.jsonWalkObject(self.allocator, &json_reader, context, parseObjectField);
-
-        const trailing = try json_reader.next();
-        if (trailing != .end_of_document) try json_reader.skipValue();
+        try provider.jsonWalkObject(allocator, reader, context, parseObjectField);
 
         if (timestamp_token == null) return;
 
@@ -147,7 +135,7 @@ const CodexLineHandler = struct {
             if (payload_result.model) |token| {
                 var model_token = token;
                 payload_result.model = null;
-                _ = self.ctx.captureModel(self.allocator, self.model_state, model_token) catch |err| {
+                _ = self.ctx.captureModel(allocator, self.model_state, model_token) catch |err| {
                     self.ctx.logWarning(self.file_path, "failed to capture model", err);
                     model_token.deinit(self.allocator);
                     return;

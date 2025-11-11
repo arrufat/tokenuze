@@ -122,22 +122,14 @@ const ClaudeLineHandler = struct {
     }
 
     fn processLine(self: *ClaudeLineHandler, line: []const u8) !void {
-        const trimmed = std.mem.trim(u8, line, " \t\r\n");
-        if (trimmed.len == 0) return;
+        try provider.parseJsonLine(self.allocator, line, self, processRecord);
+    }
 
-        var slice_reader = std.Io.Reader.fixed(trimmed);
-        var json_reader = std.json.Reader.init(self.allocator, &slice_reader);
-        defer json_reader.deinit();
-
-        if ((try json_reader.next()) != .object_begin) return;
-
+    fn processRecord(self: *ClaudeLineHandler, allocator: std.mem.Allocator, reader: *std.json.Reader) !void {
         var record = ClaudeRecord{};
-        defer record.deinit(self.allocator);
+        defer record.deinit(allocator);
 
-        try provider.jsonWalkObject(self.allocator, &json_reader, &record, parseClaudeRecordField);
-
-        const trailing = try json_reader.next();
-        if (trailing != .end_of_document) try json_reader.skipValue();
+        try provider.jsonWalkObject(allocator, reader, &record, parseClaudeRecordField);
 
         try self.emitEvent(&record);
     }
