@@ -335,25 +335,7 @@ fn parseModelValue(
     switch (peek) {
         .object_begin => {
             _ = try reader.next();
-            while (true) {
-                switch (try reader.peekNextTokenType()) {
-                    .object_end => {
-                        _ = try reader.next();
-                        return;
-                    },
-                    .string => {
-                        var key = try TokenSlice.fromString(allocator, reader);
-                        defer key.deinit(allocator);
-                        if (isModelKey(key.view())) {
-                            const maybe_token = try provider.jsonReadOptionalStringToken(allocator, reader);
-                            if (maybe_token) |token| captureModelToken(storage, allocator, token);
-                        } else {
-                            try parseModelValue(allocator, reader, storage);
-                        }
-                    },
-                    else => return error.UnexpectedToken,
-                }
-            }
+            try walkObject(allocator, reader, storage, handleModelField);
         },
         .array_begin => {
             _ = try reader.next();
@@ -372,6 +354,21 @@ fn parseModelValue(
         },
         else => try reader.skipValue(),
     }
+}
+
+fn handleModelField(
+    storage: *?TokenSlice,
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    key: []const u8,
+) !void {
+    if (isModelKey(key)) {
+        const maybe_token = try provider.jsonReadOptionalStringToken(allocator, reader);
+        if (maybe_token) |token| captureModelToken(storage, allocator, token);
+        return;
+    }
+
+    try parseModelValue(allocator, reader, storage);
 }
 
 fn parseSharedPayloadField(
