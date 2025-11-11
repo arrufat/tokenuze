@@ -836,8 +836,6 @@ fn jsonApplyDescriptorField(
 
     if (!matched) {
         try reader.skipValue();
-    } else if (!value_parsed) {
-        return error.UnexpectedToken;
     }
 }
 
