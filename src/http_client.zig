@@ -112,15 +112,18 @@ fn sendRequest(
     var response = try http_request.receiveHead(&.{});
 
     if (options.stream_handler) |handler| {
-        var buffer: [4096]u8 = undefined;
-        const reader = response.reader(&buffer);
+        var transfer_buffer: [4096]u8 = undefined;
+        const reader = response.reader(&transfer_buffer);
         var remaining = options.response_limit;
         while (true) {
-            const got = try reader.readSliceShort(buffer[0..]);
+            const got = try reader.readSliceShort(transfer_buffer[0..]);
             if (got == 0) break;
             remaining = remaining.subtract(got) orelse return error.ResponseLimitExceeded;
-            try handler(options.stream_context, buffer[0..got]);
-            if (got < buffer.len) break;
+            try handler(options.stream_context, transfer_buffer[0..got]);
+            if (got < transfer_buffer.len) {
+                // readSliceShort returns fewer bytes than requested only at EOF
+                break;
+            }
         }
         return .{ .status = response.head.status, .allocator = response_allocator };
     } else {
