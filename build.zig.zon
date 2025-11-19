@@ -1,6 +1,6 @@
 .{
     .name = .tokenuze,
-    .version = "0.5.0-dev",
+    .version = "0.4.2",
     .fingerprint = 0x62ec558b78b7381f,
     .minimum_zig_version = "0.16.0-dev.1225+bf9082518",
     .dependencies = .{},
