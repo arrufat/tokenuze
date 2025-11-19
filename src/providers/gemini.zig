@@ -230,7 +230,9 @@ fn parseGeminiMessageField(
     }
     if (std.mem.eql(u8, key, "tokens")) {
         message.usage = try provider.jsonParseUsageObjectWithDescriptors(allocator, reader, GEMINI_USAGE_FIELDS[0..]);
-        recomputeGeminiTotal(&message.usage.?);
+        if (message.usage) |*usage| {
+            recomputeGeminiTotal(usage);
+        }
         return;
     }
 
