@@ -15,10 +15,10 @@ const GEMINI_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
 };
 
 fn recomputeGeminiTotal(usage: *RawUsage) void {
-    var total = std.math.add(u64, usage.input_tokens, usage.cache_creation_input_tokens, .sat);
-    total = std.math.add(u64, total, usage.cached_input_tokens, .sat);
-    total = std.math.add(u64, total, usage.output_tokens, .sat);
-    total = std.math.add(u64, total, usage.reasoning_output_tokens, .sat);
+    var total = usage.input_tokens +| usage.cache_creation_input_tokens;
+    total = total +| usage.cached_input_tokens;
+    total = total +| usage.output_tokens;
+    total = total +| usage.reasoning_output_tokens;
     usage.total_tokens = total;
 }
 
