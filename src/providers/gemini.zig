@@ -256,7 +256,6 @@ fn emitMessage(context: *MessageContext) !void {
 
     if (context.state.previous_totals.*) |prev| {
         if (std.meta.eql(prev, usage_raw)) {
-            context.state.previous_totals.* = usage_raw;
             return;
         }
     }
