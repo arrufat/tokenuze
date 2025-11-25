@@ -482,9 +482,6 @@ const PricingFeedParser = struct {
     const AliasError = error{OutOfMemory};
 
     pub fn parse(self: *PricingFeedParser, reader: *std.json.Reader) !void {
-        var alias_buffer: std.ArrayList(u8) = .empty;
-        defer alias_buffer.deinit(self.temp_allocator);
-
         if ((try reader.next()) != .object_begin) return error.InvalidResponse;
 
         while (true) {
@@ -501,7 +498,7 @@ const PricingFeedParser = struct {
                     defer name.deinit(self.temp_allocator);
                     const maybe_pricing = try self.parseEntry(self.temp_allocator, reader);
                     if (maybe_pricing) |entry| {
-                        try self.insertPricingEntries(name.view(), entry, &alias_buffer);
+                        try self.insertPricingEntries(name.view(), entry);
                     }
                 },
                 else => return error.InvalidResponse,
@@ -565,9 +562,7 @@ const PricingFeedParser = struct {
         self: *PricingFeedParser,
         name: []const u8,
         entry: model.ModelPricing,
-        alias_buffer: *std.ArrayList(u8),
     ) AliasError!void {
-        _ = alias_buffer;
         _ = try self.putPricing(name, entry);
     }
 
@@ -1024,11 +1019,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         pub fn loadPricingData(
             shared_allocator: std.mem.Allocator,
-            temp_allocator: std.mem.Allocator,
             pricing: *model.PricingMap,
         ) !void {
-            _ = temp_allocator;
-            try ensureFallbackPricing(shared_allocator, pricing);
+            for (FALLBACK_PRICING) |fallback| {
+                if (pricing.get(fallback.name) != null) continue;
+                const key = try shared_allocator.dupe(u8, fallback.name);
+                try pricing.put(key, fallback.pricing);
+            }
         }
 
         fn logSessionWarning(file_path: []const u8, message: []const u8, err: anyerror) void {
@@ -1224,21 +1221,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             try PARSE_FN(allocator, &PARSE_CONTEXT, session_id, file_path, deduper, timezone_offset_minutes, sink);
         }
 
-        fn ensureFallbackPricing(shared_allocator: std.mem.Allocator, pricing: *model.PricingMap) !void {
-            for (FALLBACK_PRICING) |fallback| {
-                if (pricing.get(fallback.name) != null) continue;
-                const key = try shared_allocator.dupe(u8, fallback.name);
-                try pricing.put(key, fallback.pricing);
-            }
-        }
-
         test "pricing parser stores manifest entries" {
             const allocator = std.testing.allocator;
             var pricing = model.PricingMap.init(allocator);
             defer model.deinitPricingMap(&pricing, allocator);
-            var alias_buffer: std.ArrayList(u8) = .empty;
-            defer alias_buffer.deinit(allocator);
-
             var parser = PricingFeedParser{
                 .allocator = allocator,
                 .temp_allocator = allocator,
@@ -1251,7 +1237,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .cached_input_cost_per_m = 1,
                 .output_cost_per_m = 1,
             };
-            try parser.insertPricingEntries("gemini/gemini-flash-latest", pricing_entry, &alias_buffer);
+            try parser.insertPricingEntries("gemini/gemini-flash-latest", pricing_entry);
 
             try std.testing.expect(pricing.get("gemini/gemini-flash-latest") != null);
         }

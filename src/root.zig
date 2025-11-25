@@ -57,7 +57,6 @@ const CollectFn = *const fn (
 
 const LoadPricingFn = *const fn (
     std.mem.Allocator,
-    std.mem.Allocator,
     *model.PricingMap,
 ) anyerror!void;
 
@@ -491,7 +490,7 @@ fn loadPricing(
                 "pricing.{s}.fallback start (models={d})",
                 .{ prov.name, pricing.count() },
             );
-            try prov.load_pricing(allocator, temp_allocator, pricing);
+            try prov.load_pricing(allocator, pricing);
         }
         const fallback_elapsed = nsToMs(fallback_timer.read());
         const fallback_added = pricing.count() - (before_models + remote_stats.models_added);
