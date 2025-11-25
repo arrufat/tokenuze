@@ -179,13 +179,11 @@ fn parseRootField(
     key: []const u8,
 ) !void {
     if (std.mem.eql(u8, key, "sessionId")) {
-        var token = try provider.jsonReadStringToken(allocator, reader);
-        defer token.deinit(allocator);
-        provider.overrideSessionLabelFromSlice(
+        try provider.overrideSessionLabelFromReader(
             allocator,
+            reader,
             state.session_label,
             state.session_label_overridden,
-            token.view(),
         );
         return;
     }
@@ -225,15 +223,12 @@ fn parseMessageField(
     key: []const u8,
 ) !void {
     if (std.mem.eql(u8, key, "timestamp")) {
-        var token = try provider.jsonReadStringToken(allocator, reader);
-        defer token.deinit(allocator);
-        context.clearTimestamp();
-        const info = try provider.timestampFromSlice(
+        try provider.updateTimestampFromReader(
             context.state.allocator,
-            token.view(),
+            reader,
             context.state.timezone_offset_minutes,
-        ) orelse return;
-        context.timestamp = info;
+            &context.timestamp,
+        );
         return;
     }
     if (std.mem.eql(u8, key, "model")) {

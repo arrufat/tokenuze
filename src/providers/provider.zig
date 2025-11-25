@@ -176,6 +176,19 @@ pub fn timestampFromSlice(
     return .{ .text = duplicate, .local_iso_date = iso_date };
 }
 
+pub fn updateTimestampFromReader(
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    timezone_offset_minutes: i32,
+    slot: *?TimestampInfo,
+) !void {
+    var token = try jsonReadStringToken(allocator, reader);
+    defer token.deinit(allocator);
+    const info = try timestampFromSlice(allocator, token.view(), timezone_offset_minutes) orelse return;
+    if (slot.*) |existing| allocator.free(existing.text);
+    slot.* = info;
+}
+
 pub fn emitUsageEventWithTimestamp(
     ctx: *const ParseContext,
     allocator: std.mem.Allocator,
@@ -215,6 +228,17 @@ pub fn overrideSessionLabelFromSlice(
         session_label.* = dup;
         if (overridden) |flag| flag.* = true;
     }
+}
+
+pub fn overrideSessionLabelFromReader(
+    allocator: std.mem.Allocator,
+    reader: *std.json.Reader,
+    session_label: *[]const u8,
+    overridden: ?*bool,
+) !void {
+    var token = try jsonReadStringToken(allocator, reader);
+    defer token.deinit(allocator);
+    overrideSessionLabelFromSlice(allocator, session_label, overridden, token.view());
 }
 
 pub const UsageValueMode = enum {

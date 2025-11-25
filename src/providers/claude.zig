@@ -62,11 +62,6 @@ const EventBuilder = struct {
         dest.* = try self.allocator.dupe(u8, value);
     }
 
-    fn replaceTimestamp(self: *EventBuilder, info: provider.TimestampInfo) void {
-        if (self.timestamp) |existing| self.allocator.free(existing.text);
-        self.timestamp = info;
-    }
-
     fn emit(self: *EventBuilder) !void {
         if (!self.type_is_assistant) return;
         const usage_raw = self.usage orelse return;
@@ -170,25 +165,21 @@ fn parseClaudeRecordField(
     key: []const u8,
 ) !void {
     if (std.mem.eql(u8, key, "sessionId")) {
-        var token = try provider.jsonReadStringToken(allocator, reader);
-        defer token.deinit(allocator);
-        provider.overrideSessionLabelFromSlice(
+        try provider.overrideSessionLabelFromReader(
             builder.handler.allocator,
+            reader,
             builder.handler.session_label,
             builder.handler.session_label_overridden,
-            token.view(),
         );
         return;
     }
     if (std.mem.eql(u8, key, "timestamp")) {
-        var token = try provider.jsonReadStringToken(allocator, reader);
-        defer token.deinit(allocator);
-        const info = try provider.timestampFromSlice(
+        try provider.updateTimestampFromReader(
             builder.handler.allocator,
-            token.view(),
+            reader,
             builder.handler.timezone_offset_minutes,
-        ) orelse return;
-        builder.replaceTimestamp(info);
+            &builder.timestamp,
+        );
         return;
     }
     if (std.mem.eql(u8, key, "requestId")) {
