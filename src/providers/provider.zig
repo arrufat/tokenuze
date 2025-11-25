@@ -948,7 +948,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         pub const EventConsumer = struct {
             context: *anyopaque,
             mutex: ?*std.Thread.Mutex = null,
-            ingest: *const fn (*anyopaque, std.mem.Allocator, *model.TokenUsageEvent, model.DateFilters) anyerror!void,
+            ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) anyerror!void,
         };
 
         const PARSE_CONTEXT = ParseContext{
@@ -968,7 +968,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         fn summaryIngest(
             ctx_ptr: *anyopaque,
             allocator: std.mem.Allocator,
-            event: *model.TokenUsageEvent,
+            event: *const model.TokenUsageEvent,
             filters: model.DateFilters,
         ) anyerror!void {
             const ctx = @as(*SummaryConsumer, @ptrCast(@alignCast(ctx_ptr)));
@@ -1081,11 +1081,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                             const ctx = @as(*Self, @ptrCast(@alignCast(ctx_ptr)));
                             if (ctx.shared.consumer.mutex) |mutex| mutex.lock();
                             defer if (ctx.shared.consumer.mutex) |mutex| mutex.unlock();
-                            var temp_event = event;
                             try ctx.shared.consumer.ingest(
                                 ctx.shared.consumer.context,
                                 ctx.shared.shared_allocator,
-                                &temp_event,
+                                &event,
                                 ctx.shared.filters,
                             );
                         }
