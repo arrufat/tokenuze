@@ -234,19 +234,7 @@ fn parsePayload(
     reader: *std.json.Reader,
     payload_result: *PayloadResult,
 ) !void {
-    const peek = try reader.peekNextTokenType();
-    if (peek == .null) {
-        _ = try reader.next();
-        return;
-    }
-    if (peek != .object_begin) {
-        try reader.skipValue();
-        return;
-    }
-
-    _ = try reader.next();
-
-    try provider.jsonWalkObject(allocator, reader, payload_result, parsePayloadField);
+    try provider.jsonWalkOptionalObject(allocator, reader, payload_result, parsePayloadField);
 }
 
 fn parsePayloadField(
@@ -277,19 +265,7 @@ fn parseInfoObject(
     reader: *std.json.Reader,
     payload_result: *PayloadResult,
 ) !void {
-    const peek = try reader.peekNextTokenType();
-    if (peek == .null) {
-        _ = try reader.next();
-        return;
-    }
-    if (peek != .object_begin) {
-        try reader.skipValue();
-        return;
-    }
-
-    _ = try reader.next();
-
-    try provider.jsonWalkObject(allocator, reader, payload_result, parseInfoField);
+    try provider.jsonWalkOptionalObject(allocator, reader, payload_result, parseInfoField);
 }
 
 fn parseInfoField(

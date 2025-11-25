@@ -227,18 +227,7 @@ fn parseClaudeMessageObject(
     allocator: std.mem.Allocator,
     reader: *std.json.Reader,
 ) !void {
-    const peek = try reader.peekNextTokenType();
-    if (peek == .null) {
-        _ = try reader.next();
-        return;
-    }
-    if (peek != .object_begin) {
-        try reader.skipValue();
-        return;
-    }
-
-    _ = try reader.next();
-    try provider.jsonWalkObject(allocator, reader, builder, parseClaudeMessageField);
+    try provider.jsonWalkOptionalObject(allocator, reader, builder, parseClaudeMessageField);
 }
 
 fn parseClaudeMessageField(
