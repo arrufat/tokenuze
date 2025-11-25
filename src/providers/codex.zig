@@ -5,6 +5,7 @@ const provider = @import("provider.zig");
 const RawUsage = model.RawTokenUsage;
 const TokenSlice = provider.JsonTokenSlice;
 const ModelState = provider.ModelState;
+const token_count_type = "token_count";
 
 const fallback_pricing = [_]provider.FallbackPricingEntry{
     .{ .name = "gpt-5", .pricing = .{
@@ -259,7 +260,7 @@ fn parsePayloadField(
     if (std.mem.eql(u8, key, "type")) {
         var value = try provider.jsonReadStringToken(allocator, reader);
         defer value.deinit(allocator);
-        payload_result.is_token_count = std.mem.eql(u8, value.view(), "token_count");
+        payload_result.is_token_count = std.mem.eql(u8, value.view(), token_count_type);
         return;
     }
 
