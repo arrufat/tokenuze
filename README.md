@@ -35,22 +35,63 @@ tokenuze --help
 Tokenuze prints a JSON payload shaped like:
 ```json
 {
-  "days": [
+  "daily": [
     {
-      "date": "2025-11-01",
-      "models": [
-        {
-          "name": "gpt-5-codex",
-          "usage": { "input_tokens": 123, "output_tokens": 45, "total_tokens": 168 },
-          "cost_usd": 0.10
+      "date": "Nov 25, 2025",
+      "isoDate": "2025-11-25",
+      "inputTokens": 248291670,
+      "cachedInputTokens": 236782489,
+      "outputTokens": 1188464,
+      "reasoningOutputTokens": 749903,
+      "totalTokens": 249489543,
+      "costUSD": 55.88007429999999,
+      "models": {
+        "gemini-2.5-flash": {
+          "inputTokens": 10992,
+          "cachedInputTokens": 0,
+          "outputTokens": 10,
+          "reasoningOutputTokens": 79,
+          "totalTokens": 11032,
+          "costUSD": 0.0033225999999999998,
+          "pricingAvailable": true,
+          "isFallback": false
+        },
+        "gemini-3-pro-preview": {
+          "inputTokens": 5664,
+          "cachedInputTokens": 10521,
+          "outputTokens": 1738,
+          "reasoningOutputTokens": 2048,
+          "totalTokens": 16781,
+          "costUSD": 0.0342882,
+          "pricingAvailable": true,
+          "isFallback": false
+        },
+        "gpt-5.1-codex": {
+          "inputTokens": 248275014,
+          "cachedInputTokens": 236771968,
+          "outputTokens": 1186716,
+          "reasoningOutputTokens": 747776,
+          "totalTokens": 249461730,
+          "costUSD": 55.842463499999994,
+          "pricingAvailable": true,
+          "isFallback": false
         }
-      ],
-      "totals": { "total_tokens": 168, "cost_usd": 0.10 }
+      },
+      "missingPricing": []
     }
   ],
-  "total": { "total_tokens": 168, "cost_usd": 0.10 }
+  "totals": {
+    "inputTokens": 248291670,
+    "cachedInputTokens": 236782489,
+    "outputTokens": 1188464,
+    "reasoningOutputTokens": 749903,
+    "totalTokens": 249489543,
+    "costUSD": 55.88007429999999,
+    "missingPricing": []
+  }
 }
 ```
+
 Missing pricing entries are listed under `missing_pricing`.
 
 ## Extending
