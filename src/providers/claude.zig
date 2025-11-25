@@ -292,7 +292,7 @@ test "claude parser emits assistant usage events and respects overrides" {
 
     var events: std.ArrayList(model.TokenUsageEvent) = .empty;
     defer events.deinit(worker_allocator);
-    var sink_adapter = provider.EventListSink.init(&events, worker_allocator);
+    var sink_adapter = provider.EventListCollector.init(&events, worker_allocator);
     const sink = sink_adapter.asSink();
 
     var deduper = try MessageDeduper.init(worker_allocator);

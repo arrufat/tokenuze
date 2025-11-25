@@ -338,7 +338,7 @@ test "codex parser emits usage events from token_count entries" {
 
     var events = std.ArrayList(model.TokenUsageEvent){};
     defer events.deinit(worker_allocator);
-    var sink_adapter = provider.EventListSink.init(&events, worker_allocator);
+    var sink_adapter = provider.EventListCollector.init(&events, worker_allocator);
     const sink = sink_adapter.asSink();
 
     const ctx = provider.ParseContext{

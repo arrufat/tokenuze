@@ -356,20 +356,20 @@ pub const EventSink = struct {
     }
 };
 
-pub const EventListSink = struct {
+pub const EventListCollector = struct {
     allocator: std.mem.Allocator,
     list: *std.ArrayList(model.TokenUsageEvent),
 
-    pub fn init(list: *std.ArrayList(model.TokenUsageEvent), allocator: std.mem.Allocator) EventListSink {
+    pub fn init(list: *std.ArrayList(model.TokenUsageEvent), allocator: std.mem.Allocator) EventListCollector {
         return .{ .allocator = allocator, .list = list };
     }
 
-    pub fn asSink(self: *EventListSink) EventSink {
-        return .{ .context = self, .emitFn = EventListSink.emit };
+    pub fn asSink(self: *EventListCollector) EventSink {
+        return .{ .context = self, .emitFn = EventListCollector.emit };
     }
 
     fn emit(ctx_ptr: *anyopaque, event: model.TokenUsageEvent) anyerror!void {
-        const self = @as(*EventListSink, @ptrCast(@alignCast(ctx_ptr)));
+        const self = @as(*EventListCollector, @ptrCast(@alignCast(ctx_ptr)));
         try self.list.append(self.allocator, event);
     }
 };

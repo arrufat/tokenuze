@@ -292,7 +292,7 @@ test "gemini parser converts message totals into usage deltas" {
 
     var events: std.ArrayList(model.TokenUsageEvent) = .empty;
     defer events.deinit(worker_allocator);
-    var sink_adapter = provider.EventListSink.init(&events, worker_allocator);
+    var sink_adapter = provider.EventListCollector.init(&events, worker_allocator);
     const sink = sink_adapter.asSink();
 
     const ctx = provider.ParseContext{
