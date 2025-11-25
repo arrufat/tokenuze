@@ -343,8 +343,8 @@ fn collectSummaryInternal(
     var totals = SummaryTotals.init();
     errdefer totals.deinit(allocator);
 
-    var owned_pricing_map: model.PricingMap = undefined;
-    var owns_pricing_map = false;
+    var temp_pricing_map: ?model.PricingMap = null;
+    defer if (temp_pricing_map) |*map| model.deinitPricingMap(map, allocator);
 
     const temp_allocator = std.heap.page_allocator;
 
@@ -360,20 +360,18 @@ fn collectSummaryInternal(
 
     var total_timer = try std.time.Timer.start();
 
-    const pricing_map = blk: {
+    const pricing_map: *model.PricingMap = blk: {
         if (pricing_cache) |cache| {
             try cache.ensureLoaded(allocator, temp_allocator, selection, progress_parent);
             break :blk &cache.map;
         } else {
-            owns_pricing_map = true;
-            owned_pricing_map = model.PricingMap.init(allocator);
+            temp_pricing_map = .init(allocator);
             if (!selection.isEmpty()) {
-                try loadPricing(allocator, temp_allocator, selection, &owned_pricing_map, progress_parent);
+                try loadPricing(allocator, temp_allocator, selection, &temp_pricing_map.?, progress_parent);
             }
-            break :blk &owned_pricing_map;
+            break :blk &temp_pricing_map.?;
         }
     };
-    defer if (owns_pricing_map) model.deinitPricingMap(pricing_map, allocator);
 
     try collectSelectedProviders(
         allocator,
