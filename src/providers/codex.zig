@@ -36,13 +36,12 @@ pub const loadPricingData = ProviderExports.loadPricingData;
 pub const EventConsumer = ProviderExports.EventConsumer;
 
 const PayloadResult = struct {
-    payload_type: ?TokenSlice = null,
     model: ?TokenSlice = null,
     last_usage: ?RawUsage = null,
     total_usage: ?RawUsage = null,
+    is_token_count: bool = false,
 
     fn deinit(self: *PayloadResult, allocator: std.mem.Allocator) void {
-        if (self.payload_type) |*tok| tok.deinit(allocator);
         if (self.model) |*tok| tok.deinit(allocator);
         self.* = .{};
     }
@@ -147,11 +146,7 @@ const CodexLineHandler = struct {
 
         if (!is_event_msg) return;
 
-        var payload_type_is_token_count = false;
-        if (payload_result.payload_type) |token| {
-            payload_type_is_token_count = std.mem.eql(u8, token.view(), "token_count");
-        }
-        if (!payload_type_is_token_count) return;
+        if (!payload_result.is_token_count) return;
 
         var raw_timestamp = timestamp_token.?;
         timestamp_token = null;
@@ -262,7 +257,9 @@ fn parsePayloadField(
     if (try parseSharedPayloadField(allocator, reader, key, payload_result)) return;
 
     if (std.mem.eql(u8, key, "type")) {
-        try provider.replaceJsonToken(&payload_result.payload_type, allocator, try provider.jsonReadStringToken(allocator, reader));
+        var value = try provider.jsonReadStringToken(allocator, reader);
+        defer value.deinit(allocator);
+        payload_result.is_token_count = std.mem.eql(u8, value.view(), "token_count");
         return;
     }
 
