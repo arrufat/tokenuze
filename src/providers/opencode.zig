@@ -167,6 +167,10 @@ const MessageRecord = struct {
         const millis = self.timestamp_ms orelse return;
         const model_name = self.model_name orelse return;
 
+        const event_model = try self.allocator.dupe(u8, model_name);
+        defer self.allocator.free(model_name);
+        self.model_name = null;
+
         const iso = try formatUnixMillis(self.allocator, millis);
         defer self.allocator.free(iso);
 
@@ -183,7 +187,7 @@ const MessageRecord = struct {
             .session_id = self.session_label,
             .timestamp = timestamp_info.text,
             .local_iso_date = timestamp_info.local_iso_date,
-            .model = model_name,
+            .model = event_model,
             .usage = usage,
             .is_fallback = false,
             .display_input_tokens = self.ctx.computeDisplayInput(usage),
