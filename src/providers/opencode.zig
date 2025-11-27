@@ -309,12 +309,12 @@ fn buildMessageDirPath(
     session_identifier: []const u8,
 ) ![]u8 {
     const marker_unix = "/storage/session/";
-    if (std.mem.indexOf(u8, session_file_path, marker_unix)) |idx| {
+    if (std.mem.findLast(u8, session_file_path, marker_unix)) |idx| {
         const prefix = session_file_path[0..idx];
         return std.fmt.allocPrint(allocator, "{s}/storage/message/{s}", .{ prefix, session_identifier });
     }
     const marker_win = "\\storage\\session\\";
-    if (std.mem.indexOf(u8, session_file_path, marker_win)) |idx| {
+    if (std.mem.findLast(u8, session_file_path, marker_win)) |idx| {
         const prefix = session_file_path[0..idx];
         return std.fmt.allocPrint(allocator, "{s}\\storage\\message\\{s}", .{ prefix, session_identifier });
     }
