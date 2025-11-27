@@ -1,0 +1,19 @@
+{
+  "id": "msg_nested",
+  "role": "assistant",
+  "sessionID": "ses_fixture_one",
+  "time": {
+    "created": 1759302600000
+  },
+  "model": {
+    "providerID": "opencode",
+    "modelID": "scout-preview"
+  },
+  "tokens": {
+    "input": 400,
+    "output": 80,
+    "cache": {
+      "read": 0
+    }
+  }
+}

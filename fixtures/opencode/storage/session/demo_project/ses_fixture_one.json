@@ -1,0 +1,11 @@
+{
+  "id": "ses_fixture_one",
+  "version": "1.0.0",
+  "projectID": "demo_project",
+  "directory": "/tmp/repo",
+  "title": "Fixture Session",
+  "time": {
+    "created": 1759302000000,
+    "updated": 1759302600000
+  }
+}

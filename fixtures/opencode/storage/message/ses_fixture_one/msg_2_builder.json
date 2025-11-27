@@ -1,0 +1,20 @@
+{
+  "id": "msg_builder",
+  "role": "assistant",
+  "sessionID": "ses_fixture_one",
+  "time": {
+    "created": 1759302001000,
+    "completed": 1759302005000
+  },
+  "modelID": "grok-code",
+  "providerID": "opencode",
+  "tokens": {
+    "input": 1200,
+    "output": 200,
+    "reasoning": 50,
+    "cache": {
+      "read": 300,
+      "write": 100
+    }
+  }
+}

@@ -14,6 +14,7 @@ pub const parseFilterDate = model.parseFilterDate;
 const claude = @import("providers/claude.zig");
 const codex = @import("providers/codex.zig");
 const gemini = @import("providers/gemini.zig");
+const opencode = @import("providers/opencode.zig");
 const provider = @import("providers/provider.zig");
 const render = @import("render.zig");
 const timeutil = @import("time.zig");
@@ -85,6 +86,12 @@ pub const providers = [_]ProviderSpec{
         .phase_label = "collect_gemini",
         .collect = gemini.collect,
         .load_pricing = gemini.loadPricingData,
+    },
+    .{
+        .name = "opencode",
+        .phase_label = "collect_opencode",
+        .collect = opencode.collect,
+        .load_pricing = opencode.loadPricingData,
     },
 };
 

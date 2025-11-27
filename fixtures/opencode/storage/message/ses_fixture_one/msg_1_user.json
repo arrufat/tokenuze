@@ -1,0 +1,8 @@
+{
+  "id": "msg_user",
+  "role": "user",
+  "sessionID": "ses_fixture_one",
+  "time": {
+    "created": 1759301999000
+  }
+}
