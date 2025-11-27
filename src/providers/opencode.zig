@@ -345,6 +345,8 @@ fn parseMessageFile(
         .session_label = session_label,
         .timezone_offset_minutes = timezone_offset_minutes,
     };
+    defer if (record.model_name) |name| allocator.free(name);
+
     try provider.jsonWalkObject(allocator, &json_reader, &record, MessageRecord.handleField);
     try record.emit();
 }
