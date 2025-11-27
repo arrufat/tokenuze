@@ -209,6 +209,7 @@ fn parseSessionFile(
         ctx.logWarning(file_path, "failed to read opencode session metadata", err);
         return;
     };
+    defer allocator.free(resolved_id);
     provider.overrideSessionLabelFromSlice(allocator, &session_label, &session_label_overridden, resolved_id);
 
     const message_dir = buildMessageDirPath(allocator, file_path, resolved_id) catch |err| {
@@ -257,7 +258,7 @@ fn determineSessionIdentifier(
     allocator: std.mem.Allocator,
     ctx: *const provider.ParseContext,
     file_path: []const u8,
-) ![]const u8 {
+) ![]u8 {
     _ = ctx;
     if (readSessionIdentifier(allocator, file_path) catch null) |value| return value;
     const base = std.fs.path.basename(file_path);
@@ -267,7 +268,7 @@ fn determineSessionIdentifier(
     return allocator.dupe(u8, base);
 }
 
-fn readSessionIdentifier(allocator: std.mem.Allocator, file_path: []const u8) !?[]const u8 {
+fn readSessionIdentifier(allocator: std.mem.Allocator, file_path: []const u8) !?[]u8 {
     const data = try std.fs.cwd().readFileAlloc(file_path, allocator, std.Io.Limit.limited(1024 * 64));
     defer allocator.free(data);
 
@@ -276,9 +277,9 @@ fn readSessionIdentifier(allocator: std.mem.Allocator, file_path: []const u8) !?
     defer json_reader.deinit();
 
     if ((try json_reader.next()) != .object_begin) return null;
-    var identifier: ?[]const u8 = null;
+    var identifier: ?[]u8 = null;
     try provider.jsonWalkObject(allocator, &json_reader, &identifier, struct {
-        fn handle(id_ptr: *?[]const u8, scratch: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
+        fn handle(id_ptr: *?[]u8, scratch: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
             if (!std.mem.eql(u8, key, "id")) {
                 try reader.skipValue();
                 return;
