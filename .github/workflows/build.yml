@@ -18,17 +18,27 @@ jobs:
   build:
     strategy:
       matrix:
-        zig-version: [master]
-        platform: [linux, macos, windows]
         include:
-          - platform: linux
+          - os: ubuntu-latest
+            platform: linux
             target: x86_64-linux-musl
-          - platform: macos
+            zig-version: master
+            install: sudo apt-get update && sudo apt-get install -y sqlite3
+            shell: bash
+          - os: macos-latest
+            platform: macos
             target: aarch64-macos
-          - platform: windows
+            zig-version: master
+            install: brew install sqlite
+            shell: bash
+          - os: windows-latest
+            platform: windows
             target: x86_64-windows-gnu
+            zig-version: master
+            install: winget install --id SQLite.sqlite -e --accept-source-agreements --accept-package-agreements
+            shell: pwsh
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -42,14 +52,9 @@ jobs:
           version: ${{ matrix.zig-version }}
 
       - name: Install sqlite
-        shell: bash
-        run: |
-          set -e
-          case "${{ matrix.platform }}" in
-            linux) sudo apt-get update && sudo apt-get install -y sqlite3 ;;
-            macos) brew install sqlite ;;
-            windows) choco install sqlite ;;
-          esac
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.install }}
 
       - name: Build ${{ matrix.platform }}
+        shell: ${{ matrix.shell }}
         run: zig build -Dtarget=${{ matrix.target }}
