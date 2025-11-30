@@ -162,7 +162,11 @@ fn parseRow(
     const data_hex = try getObjectString(temp_allocator, obj, "data_hex") orelse return;
     defer temp_allocator.free(data_hex);
 
-    const blob = hexToBytes(temp_allocator, data_hex) catch return;
+    const blob_len = data_hex.len / 2;
+    if (data_hex.len % 2 != 0) return;
+    const blob = try temp_allocator.alloc(u8, blob_len);
+    errdefer temp_allocator.free(blob);
+    _ = std.fmt.hexToBytes(blob, data_hex) catch return;
     defer temp_allocator.free(blob);
 
     const json_data = decompressIfNeeded(shared_allocator, blob, data_type) catch |err| {
@@ -187,20 +191,6 @@ fn getObjectString(allocator: std.mem.Allocator, obj: std.json.ObjectMap, key: [
         };
     }
     return null;
-}
-
-fn hexToBytes(allocator: std.mem.Allocator, hex: []const u8) ![]u8 {
-    if (hex.len % 2 != 0) return error.InvalidHex;
-    const len = hex.len / 2;
-    var buf = try allocator.alloc(u8, len);
-    errdefer allocator.free(buf);
-    var i: usize = 0;
-    while (i < len) : (i += 1) {
-        const hi = std.fmt.charToDigit(hex[i * 2], 16) catch return error.InvalidHex;
-        const lo = std.fmt.charToDigit(hex[i * 2 + 1], 16) catch return error.InvalidHex;
-        buf[i] = @as(u8, @intCast(hi * 16 + lo));
-    }
-    return buf;
 }
 
 fn decompressIfNeeded(allocator: std.mem.Allocator, blob: []const u8, data_type: []const u8) ![]u8 {
