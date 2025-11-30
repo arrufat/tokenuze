@@ -205,7 +205,7 @@ fn decompressZstd(allocator: std.mem.Allocator, blob: []const u8) ![]u8 {
     defer out.deinit();
 
     var input_reader: std.Io.Reader = .fixed(blob);
-    var dec: std.compress.zstd.Decompress = .init(&input_reader, &.{}, .{ .verify_checksum = false });
+    var dec: std.compress.zstd.Decompress = .init(&input_reader, &.{}, .{ .verify_checksum = true });
     _ = try dec.reader.streamRemaining(&out.writer);
 
     return out.toOwnedSlice();
