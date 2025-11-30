@@ -18,21 +18,17 @@ jobs:
   build:
     strategy:
       matrix:
+        zig-version: [master]
+        platform: [linux, macos, windows]
         include:
-          - os: ubuntu-latest
-            platform: linux
+          - platform: linux
             target: x86_64-linux-musl
-            zig-version: master
-          - os: macos-latest
-            platform: macos
+          - platform: macos
             target: aarch64-macos
-            zig-version: master
-          - os: windows-latest
-            platform: windows
+          - platform: windows
             target: x86_64-windows-gnu
-            zig-version: master
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -44,19 +40,6 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ matrix.zig-version }}
-
-      - name: Install sqlite (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y sqlite3
-
-      - name: Install sqlite (macOS)
-        if: runner.os == 'macOS'
-        run: brew install sqlite
-
-      - name: Install sqlite (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: winget install --id SQLite.sqlite -e --accept-source-agreements --accept-package-agreements
 
       - name: Build ${{ matrix.platform }}
         run: zig build -Dtarget=${{ matrix.target }}

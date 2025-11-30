@@ -19,30 +19,24 @@ jobs:
         with:
           version: master
 
-      - name: Install sqlite
-        run: sudo apt-get update && sudo apt-get install -y sqlite3
-
       - name: Unit tests
         run: zig build test
 
   artifacts:
     needs: test
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            platform: linux
+          - platform: linux
             target: x86_64-linux-musl
             archive: tokenuze-linux-x86_64.tar.gz
             exe: tokenuze
-          - os: macos-latest
-            platform: macos
+          - platform: macos
             target: aarch64-macos
             archive: tokenuze-macos-aarch64.tar.gz
             exe: tokenuze
-          - os: windows-latest
-            platform: windows
+          - platform: windows
             target: x86_64-windows-gnu
             archive: tokenuze-windows-x86_64.zip
             exe: tokenuze.exe
@@ -57,20 +51,6 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: master
-
-      - name: Install sqlite
-        shell: bash
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y sqlite3
-
-      - name: Install sqlite (macOS)
-        if: runner.os == 'macOS'
-        run: brew install sqlite
-
-      - name: Install sqlite (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: winget install --id SQLite.sqlite -e --accept-source-agreements --accept-package-agreements
 
       - name: Build ${{ matrix.platform }}
         run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast
