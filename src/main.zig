@@ -84,6 +84,11 @@ pub fn main() !void {
             return;
         }
     }
+    if (options.sessions) {
+        try handleSessionsOutput(allocator, options);
+        return;
+    }
+
     try tokenuze.run(allocator, options.filters, options.providers);
 }
 
@@ -93,6 +98,35 @@ fn printMachineId(allocator: std.mem.Allocator) !void {
     var stdout = std.fs.File.stdout().writer(&buffer);
     const writer = &stdout.interface;
     try writer.print("{s}\n", .{id[0..]});
+    writer.flush() catch |err| switch (err) {
+        error.WriteFailed => {},
+        else => return err,
+    };
+}
+
+fn handleSessionsOutput(allocator: std.mem.Allocator, options: cli.CliOptions) !void {
+    var buffer: [4096]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&buffer);
+    const writer = &stdout.interface;
+
+    var cache = tokenuze.PricingCache.init(allocator);
+    defer cache.deinit(allocator);
+
+    var recorder = try tokenuze.collectSessionsWithCache(
+        allocator,
+        options.filters,
+        options.providers,
+        &cache,
+    );
+    defer recorder.deinit(allocator);
+
+    if (options.filters.output_format == .table) {
+        try tokenuze.renderSessionsTable(writer, allocator, &recorder);
+    } else {
+        const json = try recorder.renderJson(allocator, options.filters.pretty_output);
+        defer allocator.free(json);
+        try writer.print("{s}\n", .{json});
+    }
     writer.flush() catch |err| switch (err) {
         error.WriteFailed => {},
         else => return err,

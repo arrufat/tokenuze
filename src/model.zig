@@ -345,6 +345,7 @@ pub const SummaryTotals = struct {
 pub const SessionRecorder = struct {
     sessions: std.StringHashMap(SessionEntry),
     totals: TokenUsage = .{},
+    display_total_input_tokens: u64 = 0,
     total_cost_usd: f64 = 0,
 
     pub fn init(allocator: std.mem.Allocator) SessionRecorder {
@@ -402,22 +403,27 @@ pub const SessionRecorder = struct {
         }
     }
 
-    pub fn renderJson(self: *const SessionRecorder, allocator: std.mem.Allocator) ![]u8 {
+    pub fn renderJson(self: *const SessionRecorder, allocator: std.mem.Allocator, pretty: bool) ![]u8 {
         var buffer = std.ArrayList(u8).empty;
         defer buffer.deinit(allocator);
         var writer_state = io_util.ArrayWriter.init(&buffer, allocator);
-        var stringify = std.json.Stringify{ .writer = writer_state.writer(), .options = .{} };
+        var stringify = std.json.Stringify{
+            .writer = writer_state.writer(),
+            .options = .{
+                .whitespace = if (pretty) .indent_2 else .minified,
+            },
+        };
         try stringify.beginObject();
         try stringify.objectField("sessions");
         try self.writeSessionsArray(allocator, &stringify);
         try stringify.objectField("totals");
-        try writeUsageObject(&stringify, self.totals, self.total_cost_usd);
+        try writeUsageObject(&stringify, self.totals, self.total_cost_usd, self.display_total_input_tokens);
         try stringify.endObject();
         return buffer.toOwnedSlice(allocator);
     }
 
     fn writeSessionsArray(self: *const SessionRecorder, allocator: std.mem.Allocator, jw: *std.json.Stringify) !void {
-        var pointers = try self.collectSessionPointers(allocator);
+        var pointers = try self.sortedSessions(allocator);
         defer pointers.deinit(allocator);
         try jw.beginArray();
         for (pointers.items) |session| {
@@ -426,7 +432,7 @@ pub const SessionRecorder = struct {
         try jw.endArray();
     }
 
-    fn collectSessionPointers(
+    pub fn sortedSessions(
         self: *const SessionRecorder,
         allocator: std.mem.Allocator,
     ) !std.ArrayListUnmanaged(*const SessionEntry) {
@@ -444,9 +450,10 @@ pub const SessionRecorder = struct {
         return std.mem.lessThan(u8, lhs.session_id, rhs.session_id);
     }
 
-    fn writeUsageObject(jw: *std.json.Stringify, usage: TokenUsage, cost: f64) !void {
+    fn writeUsageObject(jw: *std.json.Stringify, usage: TokenUsage, cost: f64, display_input_tokens: u64) !void {
         try jw.beginObject();
-        try writeUsageJsonFields(jw, usage, null, .{});
+        const display_override: ?u64 = if (display_input_tokens > 0) display_input_tokens else null;
+        try writeUsageJsonFields(jw, usage, display_override, .{});
         try jw.objectField("costUSD");
         try jw.write(cost);
         try jw.endObject();
@@ -465,7 +472,7 @@ pub const SessionRecorder = struct {
         return .{ .session_id = session_id, .directory = "", .session_file = session_id };
     }
 
-    const SessionEntry = struct {
+    pub const SessionEntry = struct {
         session_id: []const u8,
         directory: []const u8,
         session_file: []const u8,
@@ -594,7 +601,7 @@ pub const SessionRecorder = struct {
         }
     };
 
-    const SessionModel = struct {
+    pub const SessionModel = struct {
         name: []const u8,
         usage: TokenUsage,
         is_fallback: bool,

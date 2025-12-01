@@ -14,33 +14,81 @@ pub const Renderer = struct {
         cost,
     };
     const Column = struct {
-        id: ColumnId,
         header: []const u8,
         alignment: Alignment,
     };
 
     const table_columns = [_]Column{
-        .{ .id = .date, .header = "Date", .alignment = .left },
-        .{ .id = .models, .header = "Models", .alignment = .left },
-        .{ .id = .input, .header = "Input", .alignment = .right },
-        .{ .id = .output, .header = "Output", .alignment = .right },
-        .{ .id = .cache_create, .header = "Cache Create", .alignment = .right },
-        .{ .id = .cache_read, .header = "Cache Read", .alignment = .right },
-        .{ .id = .total_tokens, .header = "Total Tokens", .alignment = .right },
-        .{ .id = .cost, .header = "Cost (USD)", .alignment = .right },
+        .{ .header = "Date", .alignment = .left },
+        .{ .header = "Models", .alignment = .left },
+        .{ .header = "Input", .alignment = .right },
+        .{ .header = "Output", .alignment = .right },
+        .{ .header = "Cache Create", .alignment = .right },
+        .{ .header = "Cache Read", .alignment = .right },
+        .{ .header = "Total Tokens", .alignment = .right },
+        .{ .header = "Cost (USD)", .alignment = .right },
     };
+    comptime {
+        const fields = @typeInfo(ColumnId).@"enum".fields;
+        if (table_columns.len != fields.len)
+            @compileError("table_columns must align with ColumnId ordering");
+    }
 
     const column_count = table_columns.len;
     const max_models_in_table = 3;
 
+    const SessionColumnId = enum {
+        session,
+        activity,
+        models,
+        input,
+        output,
+        cache_create,
+        cache_read,
+        reasoning,
+        total_tokens,
+        cost,
+    };
+
+    const session_columns = [_]Column{
+        .{ .header = "Session", .alignment = .left },
+        .{ .header = "Last Activity", .alignment = .left },
+        .{ .header = "Models", .alignment = .left },
+        .{ .header = "Input", .alignment = .right },
+        .{ .header = "Output", .alignment = .right },
+        .{ .header = "Cache Create", .alignment = .right },
+        .{ .header = "Cache Read", .alignment = .right },
+        .{ .header = "Reasoning", .alignment = .right },
+        .{ .header = "Total Tokens", .alignment = .right },
+        .{ .header = "Cost (USD)", .alignment = .right },
+    };
+    comptime {
+        const fields = @typeInfo(SessionColumnId).@"enum".fields;
+        if (session_columns.len != fields.len)
+            @compileError("session_columns must align with SessionColumnId ordering");
+    }
+
+    const session_column_count = session_columns.len;
+
     const Row = struct {
         cells: [column_count][]const u8,
+    };
+
+    const SessionRow = struct {
+        cells: [session_column_count][]const u8,
     };
 
     fn usageFieldVisibilityFromTotals(totals: *const model.SummaryTotals) model.UsageFieldVisibility {
         return .{
             .cache_creation = totals.usage.cache_creation_input_tokens > 0,
             .cache_read = totals.usage.cached_input_tokens > 0,
+        };
+    }
+
+    fn usageFieldVisibilityFromTokenUsage(usage: model.TokenUsage) model.UsageFieldVisibility {
+        return .{
+            .cache_creation = usage.cache_creation_input_tokens > 0,
+            .cache_read = usage.cached_input_tokens > 0,
         };
     }
 
@@ -103,11 +151,11 @@ pub const Renderer = struct {
         var rows = try arena.alloc(Row, summaries.len);
         for (summaries, 0..) |*summary, idx| {
             rows[idx] = try formatRow(arena, summary);
-            updateWidths(&widths, rows[idx].cells[0..], column_usage[0..]);
+            updateWidths(widths[0..], rows[idx].cells[0..], column_usage[0..]);
         }
 
         const totals_row = try formatTotalsRow(arena, totals);
-        updateWidths(&widths, totals_row.cells[0..], column_usage[0..]);
+        updateWidths(widths[0..], totals_row.cells[0..], column_usage[0..]);
 
         try writeRule(writer, widths[0..], column_usage[0..], '-');
         var header_cells: [column_count][]const u8 = undefined;
@@ -129,6 +177,60 @@ pub const Renderer = struct {
                 try writer.print("  - {s}\n", .{model_name});
             }
         }
+    }
+
+    pub fn writeSessionsTable(
+        writer: *std.Io.Writer,
+        allocator: std.mem.Allocator,
+        recorder: *const model.SessionRecorder,
+    ) !void {
+        var sessions = try recorder.sortedSessions(allocator);
+        defer sessions.deinit(allocator);
+
+        if (sessions.items.len == 0) {
+            try writer.writeAll("No session data found for the selected filters.\n");
+            return;
+        }
+
+        const visibility = usageFieldVisibilityFromTokenUsage(recorder.totals);
+        const show_reasoning = recorder.totals.reasoning_output_tokens > 0;
+        var column_usage = [_]bool{true} ** session_column_count;
+        column_usage[@intFromEnum(SessionColumnId.cache_create)] = visibility.cache_creation;
+        column_usage[@intFromEnum(SessionColumnId.cache_read)] = visibility.cache_read;
+        column_usage[@intFromEnum(SessionColumnId.reasoning)] = show_reasoning;
+
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        var widths = [_]usize{0} ** session_column_count;
+        for (session_columns, 0..) |column, idx| {
+            if (!column_usage[idx]) continue;
+            widths[idx] = column.header.len;
+        }
+
+        var rows = try arena.alloc(SessionRow, sessions.items.len);
+        for (sessions.items, 0..) |session, idx| {
+            rows[idx] = try formatSessionRow(arena, session);
+            updateWidths(widths[0..], rows[idx].cells[0..], column_usage[0..]);
+        }
+
+        const totals_row = try formatSessionTotalsRow(arena, recorder, sessions.items.len);
+        updateWidths(widths[0..], totals_row.cells[0..], column_usage[0..]);
+
+        try writeRule(writer, widths[0..], column_usage[0..], '-');
+        var header_cells: [session_column_count][]const u8 = undefined;
+        for (session_columns, 0..) |column, idx| {
+            header_cells[idx] = column.header;
+        }
+        try writeRow(writer, widths[0..], header_cells[0..], session_columns[0..], column_usage[0..]);
+        try writeRule(writer, widths[0..], column_usage[0..], '=');
+        for (rows) |row| {
+            try writeRow(writer, widths[0..], row.cells[0..], session_columns[0..], column_usage[0..]);
+        }
+        try writeRule(writer, widths[0..], column_usage[0..], '-');
+        try writeRow(writer, widths[0..], totals_row.cells[0..], session_columns[0..], column_usage[0..]);
+        try writeRule(writer, widths[0..], column_usage[0..], '-');
     }
 
     const Output = struct {
@@ -215,6 +317,68 @@ pub const Renderer = struct {
         }
     };
 
+    fn formatSessionRow(
+        allocator: std.mem.Allocator,
+        session: *const model.SessionRecorder.SessionEntry,
+    ) !SessionRow {
+        var cells: [session_column_count][]const u8 = undefined;
+        cells[@intFromEnum(SessionColumnId.session)] = session.session_id;
+        cells[@intFromEnum(SessionColumnId.activity)] = session.last_activity orelse "-";
+        cells[@intFromEnum(SessionColumnId.models)] = try formatSessionModels(allocator, session.models.items);
+        cells[@intFromEnum(SessionColumnId.input)] = try formatNumber(allocator, session.usage.input_tokens);
+        cells[@intFromEnum(SessionColumnId.output)] = try formatNumber(allocator, session.usage.output_tokens);
+        cells[@intFromEnum(SessionColumnId.cache_create)] = try formatNumber(allocator, session.usage.cache_creation_input_tokens);
+        cells[@intFromEnum(SessionColumnId.cache_read)] = try formatNumber(allocator, session.usage.cached_input_tokens);
+        cells[@intFromEnum(SessionColumnId.reasoning)] = try formatNumber(allocator, session.usage.reasoning_output_tokens);
+        cells[@intFromEnum(SessionColumnId.total_tokens)] = try formatNumber(allocator, session.usage.total_tokens);
+        cells[@intFromEnum(SessionColumnId.cost)] = try formatCurrency(allocator, session.cost_usd);
+        return SessionRow{ .cells = cells };
+    }
+
+    fn formatSessionTotalsRow(
+        allocator: std.mem.Allocator,
+        recorder: *const model.SessionRecorder,
+        session_count: usize,
+    ) !SessionRow {
+        var cells: [session_column_count][]const u8 = undefined;
+        cells[@intFromEnum(SessionColumnId.session)] = "TOTAL";
+        cells[@intFromEnum(SessionColumnId.activity)] = "-";
+        cells[@intFromEnum(SessionColumnId.models)] = try std.fmt.allocPrint(
+            allocator,
+            "{d} sessions",
+            .{session_count},
+        );
+        const display_input = effectiveInputTokens(recorder.totals, recorder.display_total_input_tokens);
+        cells[@intFromEnum(SessionColumnId.input)] = try formatNumber(allocator, display_input);
+        cells[@intFromEnum(SessionColumnId.output)] = try formatNumber(allocator, recorder.totals.output_tokens);
+        cells[@intFromEnum(SessionColumnId.cache_create)] = try formatNumber(allocator, recorder.totals.cache_creation_input_tokens);
+        cells[@intFromEnum(SessionColumnId.cache_read)] = try formatNumber(allocator, recorder.totals.cached_input_tokens);
+        cells[@intFromEnum(SessionColumnId.reasoning)] = try formatNumber(allocator, recorder.totals.reasoning_output_tokens);
+        cells[@intFromEnum(SessionColumnId.total_tokens)] = try formatNumber(allocator, recorder.totals.total_tokens);
+        cells[@intFromEnum(SessionColumnId.cost)] = try formatCurrency(allocator, recorder.total_cost_usd);
+        return SessionRow{ .cells = cells };
+    }
+
+    fn formatSessionModels(
+        allocator: std.mem.Allocator,
+        models: []const model.SessionRecorder.SessionModel,
+    ) ![]const u8 {
+        if (models.len == 0) return "-";
+        const count = @min(models.len, max_models_in_table);
+        const names = try allocator.alloc([]const u8, count);
+        for (names, 0..) |*slot, idx| {
+            slot.* = models[idx].name;
+        }
+        var joined = try std.mem.join(allocator, ", ", names);
+        allocator.free(names);
+        if (models.len > count) {
+            const old_joined = joined;
+            joined = try std.fmt.allocPrint(allocator, "{s} (+{d} more)", .{ old_joined, models.len - count });
+            allocator.free(old_joined);
+        }
+        return joined;
+    }
+
     fn formatRow(allocator: std.mem.Allocator, summary: *const model.DailySummary) !Row {
         var cells: [column_count][]const u8 = undefined;
         cells[0] = summary.display_date;
@@ -254,23 +418,14 @@ pub const Renderer = struct {
         return usage.input_tokens;
     }
 
-    fn updateWidths(
-        widths: *[column_count]usize,
-        cells: []const []const u8,
-        column_usage: []const bool,
-    ) void {
+    fn updateWidths(widths: []usize, cells: []const []const u8, column_usage: []const bool) void {
         for (cells, 0..) |cell, idx| {
             if (!column_usage[idx]) continue;
             if (cell.len > widths[idx]) widths[idx] = cell.len;
         }
     }
 
-    fn writeRule(
-        writer: *std.Io.Writer,
-        widths: []const usize,
-        column_usage: []const bool,
-        ch: u8,
-    ) !void {
+    fn writeRule(writer: anytype, widths: []const usize, column_usage: []const bool, ch: u8) !void {
         try writer.writeAll("+");
         for (widths, 0..) |width, idx| {
             if (!column_usage[idx]) continue;
@@ -281,7 +436,7 @@ pub const Renderer = struct {
     }
 
     fn writeRow(
-        writer: *std.Io.Writer,
+        writer: anytype,
         widths: []const usize,
         cells: []const []const u8,
         columns: []const Column,
@@ -380,5 +535,69 @@ pub const Renderer = struct {
             }
         }
         return result;
+    }
+
+    test "writeSessionsTable renders tiny snapshot" {
+        const allocator = std.testing.allocator;
+        var recorder = model.SessionRecorder.init(allocator);
+        defer recorder.deinit(allocator);
+
+        // Manually insert one session with simple usage and cost
+        var gop = try recorder.sessions.getOrPut("s1");
+        gop.key_ptr.* = try allocator.dupe(u8, "s1");
+        gop.value_ptr.* = model.SessionRecorder.SessionEntry.init("s1", "", "");
+        gop.value_ptr.usage.input_tokens = 10;
+        gop.value_ptr.usage.total_tokens = 10;
+        gop.value_ptr.cost_usd = 1.23;
+        recorder.totals.input_tokens = 10;
+        recorder.totals.total_tokens = 10;
+        recorder.total_cost_usd = 1.23;
+
+        var buffer: [256]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&buffer);
+        const writer = &stream.writer();
+
+        try Renderer.writeSessionsTable(writer, allocator, &recorder);
+        const out = stream.getWritten();
+        try std.testing.expect(std.mem.indexOf(u8, out, "s1") != null);
+        try std.testing.expect(std.mem.indexOf(u8, out, "$1.23") != null);
+    }
+
+    test "formatDigitsWithCommas works" {
+        const allocator = std.testing.allocator;
+        const input = "1234567".*;
+        const output = try formatDigitsWithCommas(allocator, input);
+        defer allocator.free(output);
+        try std.testing.expectEqualStrings("1,234,567", output);
+    }
+
+    test "writeRow respects alignment and widths" {
+        var list = std.ArrayListUnmanaged(u8){};
+        defer list.deinit(std.testing.allocator);
+
+        const columns = [_]Column{
+            .{ .header = "Left", .alignment = .left },
+            .{ .header = "Right", .alignment = .right },
+        };
+        var widths = [_]usize{ 4, 5 };
+        const cells = [_][]const u8{ "a", "b" };
+        const usage = [_]bool{ true, true };
+
+        const TestWriter = struct {
+            list: *std.ArrayListUnmanaged(u8),
+            alloc: std.mem.Allocator,
+
+            pub fn writeAll(self: *@This(), bytes: []const u8) !void {
+                try self.list.appendSlice(self.alloc, bytes);
+            }
+
+            pub fn splatByteAll(self: *@This(), byte: u8, count: usize) !void {
+                try self.list.appendNTimes(self.alloc, byte, count);
+            }
+        };
+
+        var writer = TestWriter{ .list = &list, .alloc = std.testing.allocator };
+        try writeRow(&writer, &widths, &cells, &columns, &usage);
+        try std.testing.expectEqualStrings("| a    |     b |\n", list.items);
     }
 };

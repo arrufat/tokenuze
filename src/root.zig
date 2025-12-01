@@ -211,6 +211,58 @@ pub fn renderSummaryAlloc(allocator: std.mem.Allocator, filters: DateFilters, se
     return try renderSummaryBuffer(allocator, summary.builder.items(), &summary.totals, filters.pretty_output);
 }
 
+pub fn renderSessionsTable(
+    writer: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    recorder: *const model.SessionRecorder,
+) !void {
+    try render.Renderer.writeSessionsTable(writer, allocator, recorder);
+}
+
+pub fn renderSessionsAlloc(
+    allocator: std.mem.Allocator,
+    filters: DateFilters,
+    selection: ProviderSelection,
+    pretty: bool,
+) ![]u8 {
+    var cache = PricingCache.init(allocator);
+    defer cache.deinit(allocator);
+    return try renderSessionsWithCache(allocator, filters, selection, pretty, &cache);
+}
+
+pub fn renderSessionsWithCache(
+    allocator: std.mem.Allocator,
+    filters: DateFilters,
+    selection: ProviderSelection,
+    pretty: bool,
+    cache: *PricingCache,
+) ![]u8 {
+    var recorder = try collectSessionsWithCache(allocator, filters, selection, cache);
+    defer recorder.deinit(allocator);
+    return recorder.renderJson(allocator, pretty);
+}
+
+pub fn collectSessionsWithCache(
+    allocator: std.mem.Allocator,
+    filters: DateFilters,
+    selection: ProviderSelection,
+    cache: *PricingCache,
+) !model.SessionRecorder {
+    var recorder = model.SessionRecorder.init(allocator);
+    errdefer recorder.deinit(allocator);
+
+    var summary = try collectSummaryInternal(allocator, filters, selection, false, &recorder, cache);
+    // Mirror the aggregated totals from the daily summary to keep --sessions output
+    // in lockstep with the default summary, even if per-session pricing or
+    // grouping would introduce tiny floating-point differences.
+    recorder.totals = summary.totals.usage;
+    recorder.display_total_input_tokens = summary.totals.display_input_tokens;
+    recorder.total_cost_usd = summary.totals.cost_usd;
+    defer summary.deinit(allocator);
+
+    return recorder;
+}
+
 pub fn collectUploadReport(
     allocator: std.mem.Allocator,
     filters: DateFilters,
@@ -236,7 +288,7 @@ pub fn collectUploadReportWithCache(
     const daily_json = try renderSummaryBuffer(allocator, summary.builder.items(), &summary.totals, filters.pretty_output);
     errdefer allocator.free(daily_json);
 
-    const sessions_json = try recorder.renderJson(allocator);
+    const sessions_json = try recorder.renderJson(allocator, filters.pretty_output);
     errdefer allocator.free(sessions_json);
 
     return UploadReport{

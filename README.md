@@ -17,6 +17,8 @@ tokenuze --upload  # upload usage across all supported models
 tokenuze --upload --agent codex --agent gemini --agent claude --agent opencode  # request specific agents
 tokenuze --since 20250101
 tokenuze --since 20250101 --until 20250107
+tokenuze --sessions --since 20250101              # print per-session table (default)
+tokenuze --sessions --since 20250101 --json --pretty  # print per-session JSON
 tokenuze --help
 ```
 
@@ -26,6 +28,7 @@ tokenuze --help
 - `--tz <offset>` buckets events using a fixed offset like `+09`, `-05:30`, or `UTC` (default: system timezone).
 - `--table` renders the daily summaries as a ccusage-style table (default behavior; if you also pass `--json`, whichever flag appears last on the command line decides the format).
 - `--json` renders daily summaries as JSON instead of the table (respects `--pretty`; last `--table`/`--json` flag wins when both are present).
+- `--sessions` renders session-level output (table by default; use `--json`/`--pretty` for JSON) and includes per-session token/cost breakdown.
 - `--pretty` enables indented JSON output (handy when reading the payload manually).
 - `--log-level <error|warn|info|debug>` controls how chatty Tokenuze's logs are (defaults to `info`).
 - `--agent <codex|gemini|claude|opencode>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers).
