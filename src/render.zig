@@ -364,7 +364,7 @@ pub const Renderer = struct {
         models: []const model.SessionRecorder.SessionModel,
     ) ![]const u8 {
         if (models.len == 0) return "-";
-        const count = if (models.len > max_models_in_table) max_models_in_table else models.len;
+        const count = @min(models.len, max_models_in_table);
         const names = try allocator.alloc([]const u8, count);
         for (names, 0..) |*slot, idx| {
             slot.* = models[idx].name;

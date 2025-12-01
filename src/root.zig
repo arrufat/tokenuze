@@ -252,6 +252,9 @@ pub fn collectSessionsWithCache(
     errdefer recorder.deinit(allocator);
 
     var summary = try collectSummaryInternal(allocator, filters, selection, false, &recorder, cache);
+    // Mirror the aggregated totals from the daily summary to keep --sessions output
+    // in lockstep with the default summary, even if per-session pricing or
+    // grouping would introduce tiny floating-point differences.
     recorder.totals = summary.totals.usage;
     recorder.display_total_input_tokens = summary.totals.display_input_tokens;
     recorder.total_cost_usd = summary.totals.cost_usd;
