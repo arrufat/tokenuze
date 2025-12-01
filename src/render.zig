@@ -370,8 +370,11 @@ pub const Renderer = struct {
             slot.* = models[idx].name;
         }
         var joined = try std.mem.join(allocator, ", ", names);
+        allocator.free(names);
         if (models.len > count) {
-            joined = try std.fmt.allocPrint(allocator, "{s} (+{d} more)", .{ joined, models.len - count });
+            const old_joined = joined;
+            joined = try std.fmt.allocPrint(allocator, "{s} (+{d} more)", .{ old_joined, models.len - count });
+            allocator.free(old_joined);
         }
         return joined;
     }
