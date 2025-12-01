@@ -12,9 +12,17 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const resolved_version = resolveVersion(b);
 
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", b.fmt("{f}", .{resolved_version}));
+
+    const build_options_module = build_options.createModule();
+
     const mod = b.addModule("tokenuze", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .imports = &.{
+            .{ .name = "build_options", .module = build_options_module },
+        },
     });
     mod.link_libc = true;
 
@@ -31,9 +39,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.link_libc = true;
-    const build_options = b.addOptions();
-    build_options.addOption([]const u8, "version", b.fmt("{f}", .{resolved_version}));
-    exe.root_module.addOptions("build_options", build_options);
+    exe.root_module.addImport("build_options", build_options_module);
     if (target.result.os.tag == .linux and target.result.abi == .musl) {
         exe.linkage = .static;
     }
@@ -58,6 +64,7 @@ pub fn build(b: *std.Build) void {
     });
     const unit_tests = b.addTest(.{ .root_module = test_module });
     unit_tests.root_module.link_libc = true;
+    unit_tests.root_module.addImport("build_options", build_options_module);
 
     const cli_test_module = b.createModule(.{
         .root_source_file = b.path("src/cli.zig"),
@@ -69,6 +76,7 @@ pub fn build(b: *std.Build) void {
     });
     const cli_tests = b.addTest(.{ .root_module = cli_test_module });
     cli_tests.root_module.link_libc = true;
+    cli_tests.root_module.addImport("build_options", build_options_module);
 
     const test_step = b.step("test", "Run unit tests");
     const test_cmd = b.addRunArtifact(unit_tests);

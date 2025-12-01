@@ -15,7 +15,9 @@ const claude = @import("providers/claude.zig");
 const codex = @import("providers/codex.zig");
 const gemini = @import("providers/gemini.zig");
 const opencode = @import("providers/opencode.zig");
+const zed = @import("providers/zed.zig");
 const provider = @import("providers/provider.zig");
+const build_options = @import("build_options");
 const render = @import("render.zig");
 const timeutil = @import("time.zig");
 pub const parseTimezoneOffsetMinutes = timeutil.parseTimezoneOffsetMinutes;
@@ -92,6 +94,12 @@ pub const providers = [_]ProviderSpec{
         .phase_label = "collect_opencode",
         .collect = opencode.collect,
         .load_pricing = opencode.loadPricingData,
+    },
+    .{
+        .name = "zed",
+        .phase_label = "collect_zed",
+        .collect = @import("providers/zed.zig").collect,
+        .load_pricing = @import("providers/zed.zig").loadPricingData,
     },
 };
 

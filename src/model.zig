@@ -269,6 +269,20 @@ const pricing_candidate_prefixes = [_][]const u8{
     "vertex_ai/",
 };
 
+const pricing_aliases = [_]struct { alias: []const u8, target: []const u8 }{
+    // Gemini names as displayed in Zed
+    .{ .alias = "gemini 3 pro", .target = "gemini-3-pro" },
+    .{ .alias = "gemini 2.5 pro", .target = "gemini-2.5-pro" },
+    .{ .alias = "gemini 2.5 flash", .target = "gemini-2.5-flash" },
+    .{ .alias = "gemini 2.5 flash-lite", .target = "gemini-2.5-flash-lite" },
+    .{ .alias = "gemini 2.5 flash-lite preview", .target = "gemini-2.5-flash-lite" },
+    .{ .alias = "gemini 2.0 flash", .target = "gemini-2.0-flash" },
+    .{ .alias = "gemini 2.0 flash-lite", .target = "gemini-2.0-flash-lite" },
+    .{ .alias = "gemini 1.5 pro", .target = "gemini-1.5-pro" },
+    .{ .alias = "gemini 1.5 flash", .target = "gemini-1.5-flash" },
+    .{ .alias = "gemini 1.5 flash-8b", .target = "gemini-1.5-flash-8b" },
+};
+
 pub fn deinitPricingMap(map: *PricingMap, allocator: std.mem.Allocator) void {
     var iterator = map.iterator();
     while (iterator.next()) |entry| {
@@ -709,6 +723,10 @@ fn resolveModelPricing(
     pricing_map: *PricingMap,
     model_name: []const u8,
 ) ?ModelPricing {
+    if (pricingAliasTarget(model_name)) |target| {
+        if (resolveWithName(allocator, pricing_map, target, model_name)) |rate| return rate;
+    }
+
     if (resolveWithName(allocator, pricing_map, model_name, model_name)) |rate|
         return rate;
 
@@ -733,6 +751,13 @@ fn resolveModelPricing(
         }
     }
 
+    return null;
+}
+
+fn pricingAliasTarget(name: []const u8) ?[]const u8 {
+    for (pricing_aliases) |entry| {
+        if (std.ascii.eqlIgnoreCase(entry.alias, name)) return entry.target;
+    }
     return null;
 }
 

@@ -1,6 +1,6 @@
 # Tokenuze
 
-Tokenuze is a Zig CLI that summarizes OpenAI Codex, Gemini, Claude, and Opencode session usage. It scans `~/.codex/sessions`, `~/.gemini/tmp`, `~/.claude/projects`, and `~/.local/share/opencode/storage/session`, aggregates token counts per day and per model, and reports pricing using either the live LiteLLM pricing manifest or local fallbacks. Output is rendered as a ccusage-style table by default (or compact JSON with `--json`), making it easy to feed into dashboards or further scripts.
+Tokenuze is a Zig CLI that summarizes OpenAI Codex, Gemini, Claude, Opencode, and (when available at build time) Zed session usage. It scans `~/.codex/sessions`, `~/.gemini/tmp`, `~/.claude/projects`, `~/.local/share/opencode/storage/session`, and `~/.local/share/zed/threads/threads.db`, aggregates token counts per day and per model, and reports pricing using either the live LiteLLM pricing manifest or local fallbacks. Output is rendered as a ccusage-style table by default (or compact JSON with `--json`), making it easy to feed into dashboards or further scripts.
 
 ## Requirements
 - Zig 0.16.0-dev.1456+16fc083f2 (for building from source)
@@ -8,6 +8,7 @@ Tokenuze is a Zig CLI that summarizes OpenAI Codex, Gemini, Claude, and Opencode
 - Optional: access to Gemini session logs at `~/.gemini/tmp`
 - Optional: access to Claude session logs at `~/.claude/projects`
 - Optional: access to Opencode session logs at `~/.local/share/opencode/storage/session` (messages live under `storage/message/<sessionID>`)
+- Optional: access to Zed threads db at `~/.local/share/zed/threads/threads.db` (requires the sqlite3 binary at runtime)
 - Optional: network access to fetch remote pricing / uploading stats
 
 ## Quick Start
@@ -31,7 +32,7 @@ tokenuze --help
 - `--sessions` renders session-level output (table by default; use `--json`/`--pretty` for JSON) and includes per-session token/cost breakdown.
 - `--pretty` enables indented JSON output (handy when reading the payload manually).
 - `--log-level <error|warn|info|debug>` controls how chatty Tokenuze's logs are (defaults to `info`).
-- `--agent <codex|gemini|claude|opencode>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers).
+- `--agent <codex|gemini|claude|opencode|zed>` restricts processing to the specified provider; repeat the flag to include multiple (defaults to all providers compiled into the binary).
 - `--machine-id` prints the cached/generated machine identifier and exits (no summaries).
 - `--upload` captures Tokenuze's JSON summary for the selected providers and POSTs it to `/api/usage/report` using `DASHBOARD_API_URL`/`DASHBOARD_API_KEY`. Pass `--table` or `--json` alongside `--upload` to display a local report after the upload completes.
 
