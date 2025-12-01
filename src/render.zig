@@ -364,17 +364,6 @@ pub const Renderer = struct {
         return joined;
     }
 
-    fn updateSessionWidths(
-        widths: []usize,
-        cells: []const []const u8,
-        column_usage: []const bool,
-    ) void {
-        for (cells, 0..) |cell, idx| {
-            if (!column_usage[idx]) continue;
-            if (cell.len > widths[idx]) widths[idx] = cell.len;
-        }
-    }
-
     fn formatRow(allocator: std.mem.Allocator, summary: *const model.DailySummary) !Row {
         var cells: [column_count][]const u8 = undefined;
         cells[0] = summary.display_date;
