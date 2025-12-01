@@ -28,6 +28,11 @@ pub const Renderer = struct {
         .{ .header = "Total Tokens", .alignment = .right },
         .{ .header = "Cost (USD)", .alignment = .right },
     };
+    comptime {
+        const fields = @typeInfo(ColumnId).@"enum".fields;
+        if (table_columns.len != fields.len)
+            @compileError("table_columns must align with ColumnId ordering");
+    }
 
     const column_count = table_columns.len;
     const max_models_in_table = 3;
@@ -57,6 +62,11 @@ pub const Renderer = struct {
         .{ .header = "Total Tokens", .alignment = .right },
         .{ .header = "Cost (USD)", .alignment = .right },
     };
+    comptime {
+        const fields = @typeInfo(SessionColumnId).@"enum".fields;
+        if (session_columns.len != fields.len)
+            @compileError("session_columns must align with SessionColumnId ordering");
+    }
 
     const session_column_count = session_columns.len;
 
