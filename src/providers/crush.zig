@@ -145,12 +145,12 @@ fn findCrushDbPaths(allocator: std.mem.Allocator, temp_allocator: std.mem.Alloca
         list.deinit(allocator);
     }
 
-    var queue = std.ArrayList([]u8).empty;
+    var queue: std.ArrayList([]u8) = .empty;
     defer queue.deinit(temp_allocator);
     try queue.append(temp_allocator, try temp_allocator.dupe(u8, "."));
 
     while (queue.items.len > 0) {
-        const dir_path = queue.pop() orelse unreachable;
+        const dir_path = queue.pop().?;
         defer temp_allocator.free(dir_path);
 
         var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true, .follow_symlinks = false }) catch |err| {
