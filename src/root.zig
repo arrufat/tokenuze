@@ -16,6 +16,7 @@ const codex = @import("providers/codex.zig");
 const gemini = @import("providers/gemini.zig");
 const opencode = @import("providers/opencode.zig");
 const zed = @import("providers/zed.zig");
+const crush = @import("providers/crush.zig");
 const provider = @import("providers/provider.zig");
 const build_options = @import("build_options");
 const render = @import("render.zig");
@@ -100,6 +101,12 @@ pub const providers = [_]ProviderSpec{
         .phase_label = "collect_zed",
         .collect = @import("providers/zed.zig").collect,
         .load_pricing = @import("providers/zed.zig").loadPricingData,
+    },
+    .{
+        .name = "crush",
+        .phase_label = "collect_crush",
+        .collect = crush.collect,
+        .load_pricing = crush.loadPricingData,
     },
 };
 
