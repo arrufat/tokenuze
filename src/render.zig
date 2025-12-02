@@ -326,10 +326,15 @@ pub const Renderer = struct {
     ) !SessionRow {
         var cells: [session_column_count][]const u8 = undefined;
         cells[@intFromEnum(SessionColumnId.session)] = session.session_id;
-        cells[@intFromEnum(SessionColumnId.activity)] = if (session.last_activity) |timestamp|
-            timeutil.formatTimestampForTimezone(allocator, timestamp, timezone_offset_minutes) catch timestamp
-        else
-            "-";
+        cells[@intFromEnum(SessionColumnId.activity)] = if (session.last_activity) |timestamp| blk: {
+            break :blk timeutil.formatTimestampForTimezone(allocator, timestamp, timezone_offset_minutes) catch |err| {
+                std.log.warn(
+                    "Failed to format timestamp '{s}' for session '{s}': {s}",
+                    .{ timestamp, session.session_id, @errorName(err) },
+                );
+                break :blk timestamp;
+            };
+        } else "-";
         cells[@intFromEnum(SessionColumnId.models)] = try formatSessionModels(allocator, session.models.items);
         cells[@intFromEnum(SessionColumnId.input)] = try formatNumber(allocator, session.usage.input_tokens);
         cells[@intFromEnum(SessionColumnId.output)] = try formatNumber(allocator, session.usage.output_tokens);
