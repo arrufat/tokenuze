@@ -2,13 +2,13 @@ const std = @import("std");
 const model = @import("../model.zig");
 const provider = @import("provider.zig");
 
+const db_dirname = ".crush";
+const db_filename = "crush.db";
 const parse_ctx = provider.ParseContext{
     .provider_name = "crush",
     .legacy_fallback_model = null,
     .cached_counts_overlap_input = false,
 };
-
-const db_path_parts = [_][]const u8{ ".crush", "crush.db" };
 
 pub const EventConsumer = struct {
     context: *anyopaque,
@@ -50,27 +50,42 @@ pub fn streamEvents(
     progress: ?std.Progress.Node,
 ) !void {
     _ = progress;
-    const db_path = try resolveDbPath(shared_allocator);
-    defer shared_allocator.free(db_path);
+    var db_paths = try findCrushDbPaths(shared_allocator, temp_allocator);
+    defer {
+        for (db_paths.items) |p| shared_allocator.free(p);
+        db_paths.deinit(shared_allocator);
+    }
 
-    // Check if db exists
-    std.fs.cwd().access(db_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            std.log.info("crush: skipping, .crush/crush.db not found", .{});
-            return;
-        }
-        return err;
-    };
-
-    const json_rows = runSqliteQuery(temp_allocator, db_path) catch |err| {
-        std.log.info("crush: skipping, sqlite3 query failed ({s})", .{@errorName(err)});
+    if (db_paths.items.len == 0) {
+        std.log.info("crush: skipping, no .crush/crush.db found under cwd", .{});
         return;
-    };
-    defer temp_allocator.free(json_rows);
+    }
 
-    parseRows(shared_allocator, temp_allocator, filters, consumer, json_rows) catch |err| {
-        std.log.warn("crush: failed to parse sqlite output ({s})", .{@errorName(err)});
+    var work_state = WorkState{
+        .paths = db_paths.items,
+        .next_index = .init(0),
+        .filters = filters,
+        .consumer = consumer,
+        .shared_allocator = shared_allocator,
     };
+
+    const cpu_count = std.Thread.getCpuCount() catch |err| blk: {
+        std.log.debug("crush: getCpuCount failed, defaulting to 1 ({s})", .{@errorName(err)});
+        break :blk 1;
+    };
+    const worker_count = @max(@as(usize, 1), @min(db_paths.items.len, cpu_count));
+
+    var threads = try std.ArrayListUnmanaged(std.Thread).initCapacity(shared_allocator, worker_count);
+    defer threads.deinit(shared_allocator);
+
+    for (0..worker_count) |_| {
+        const t = try std.Thread.spawn(.{}, workerMain, .{&work_state});
+        threads.appendAssumeCapacity(t);
+    }
+
+    for (threads.items) |t| {
+        t.join();
+    }
 }
 
 pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.PricingMap) !void {
@@ -78,8 +93,109 @@ pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.Pric
     _ = pricing;
 }
 
-fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
-    return std.fs.path.join(allocator, &db_path_parts);
+const WorkState = struct {
+    paths: [][]u8,
+    next_index: std.atomic.Value(usize),
+    filters: model.DateFilters,
+    consumer: EventConsumer,
+    shared_allocator: std.mem.Allocator,
+};
+
+fn workerMain(state: *WorkState) void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const temp_alloc = arena.allocator();
+
+    while (true) {
+        const idx = state.next_index.fetchAdd(1, .acq_rel);
+        if (idx >= state.paths.len) break;
+        const path = state.paths[idx];
+        processDb(state, temp_alloc, path);
+        _ = arena.reset(.retain_capacity);
+    }
+}
+
+fn processDb(state: *const WorkState, temp_allocator: std.mem.Allocator, db_path: []const u8) void {
+    std.fs.cwd().access(db_path, .{}) catch |err| {
+        if (err == error.FileNotFound) {
+            std.log.debug("crush: skipping missing db at {s}", .{db_path});
+            return;
+        }
+        std.log.warn("crush: access failed for {s} ({s})", .{ db_path, @errorName(err) });
+        return;
+    };
+
+    const json_rows = runSqliteQuery(temp_allocator, db_path) catch |err| {
+        std.log.info("crush: skipping {s}, sqlite3 query failed ({s})", .{ db_path, @errorName(err) });
+        return;
+    };
+    defer temp_allocator.free(json_rows);
+
+    parseRows(state.shared_allocator, temp_allocator, state.filters, state.consumer, json_rows) catch |err| {
+        std.log.warn("crush: failed to parse sqlite output from {s} ({s})", .{ db_path, @errorName(err) });
+    };
+}
+
+fn findCrushDbPaths(allocator: std.mem.Allocator, temp_allocator: std.mem.Allocator) !std.ArrayList([]u8) {
+    var list = std.ArrayList([]u8).empty;
+    errdefer {
+        for (list.items) |p| allocator.free(p);
+        list.deinit(allocator);
+    }
+
+    var queue = std.ArrayList([]u8).empty;
+    defer queue.deinit(temp_allocator);
+    try queue.append(temp_allocator, try temp_allocator.dupe(u8, "."));
+
+    while (queue.items.len > 0) {
+        const dir_path = queue.pop() orelse unreachable;
+        defer temp_allocator.free(dir_path);
+
+        var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true, .follow_symlinks = false }) catch |err| {
+            std.log.debug("crush: skip dir {s} ({s})", .{ dir_path, @errorName(err) });
+            continue;
+        };
+        defer dir.close();
+        var it = dir.iterate();
+        while (true) {
+            const entry = it.next() catch |err| {
+                std.log.debug("crush: iterate failed in {s} ({s})", .{ dir_path, @errorName(err) });
+                break;
+            } orelse break;
+
+            if (entry.kind == .directory) {
+                if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;
+                const child = std.fs.path.join(temp_allocator, &.{ dir_path, entry.name }) catch |err| {
+                    std.log.debug("crush: join failed for {s}/{s} ({s})", .{ dir_path, entry.name, @errorName(err) });
+                    continue;
+                };
+                queue.append(temp_allocator, child) catch |err| {
+                    std.log.debug("crush: queue append failed for {s} ({s})", .{ child, @errorName(err) });
+                    temp_allocator.free(child);
+                    continue;
+                };
+                continue;
+            }
+
+            if (entry.kind != .file) continue;
+            if (!std.mem.eql(u8, entry.name, db_filename)) continue;
+
+            const file_path = std.fs.path.join(temp_allocator, &.{ dir_path, entry.name }) catch |err| {
+                std.log.debug("crush: join failed for file {s}/{s} ({s})", .{ dir_path, entry.name, @errorName(err) });
+                continue;
+            };
+            defer temp_allocator.free(file_path);
+
+            const parent_dir = std.fs.path.dirname(file_path) orelse continue;
+            const basename = std.fs.path.basename(parent_dir);
+            if (!std.mem.eql(u8, basename, db_dirname)) continue;
+
+            const dup = try allocator.dupe(u8, file_path);
+            std.log.debug("crush: discovered db at {s}", .{file_path});
+            try list.append(allocator, dup);
+        }
+    }
+    return list;
 }
 
 fn runSqliteQuery(allocator: std.mem.Allocator, db_path: []const u8) ![]u8 {
