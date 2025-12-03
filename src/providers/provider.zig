@@ -4,6 +4,12 @@ const timeutil = @import("../time.zig");
 const io_util = @import("../io_util.zig");
 const http_client = @import("../http_client.zig");
 
+pub const EventConsumer = struct {
+    context: *anyopaque,
+    mutex: ?*std.Thread.Mutex = null,
+    ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) model.IngestError!void,
+};
+
 pub const FallbackPricingEntry = struct {
     name: []const u8,
     pricing: model.ModelPricing,
@@ -314,6 +320,19 @@ pub fn streamJsonLines(
     var streamed_total: usize = 0;
     var line_index: usize = 0;
 
+    var limit_warned = false;
+
+    const checkLimit = struct {
+        fn hit(parse_ctx: *const ParseContext, path: []const u8, max_bytes: usize, total: usize, warned: *bool) bool {
+            if (total <= max_bytes) return false;
+            if (!warned.*) {
+                parse_ctx.logWarning(path, "session stream exceeded max_bytes; stopping early", error.ResponseLimitExceeded);
+                warned.* = true;
+            }
+            return true;
+        }
+    }.hit;
+
     while (true) {
         partial_line.clearRetainingCapacity();
         var writer_ctx = io_util.ArrayWriter.init(&partial_line, allocator);
@@ -339,7 +358,7 @@ pub fn streamJsonLines(
         }
 
         streamed_total += streamed;
-        if (streamed_total > options.max_bytes) return;
+        if (checkLimit(ctx, file_path, options.max_bytes, streamed_total, &limit_warned)) return; // truncate but do not fail
 
         var line_slice: []const u8 = partial_line.items;
         if (options.trim_lines) {
@@ -348,7 +367,7 @@ pub fn streamJsonLines(
         if (options.skip_empty and line_slice.len == 0) {
             if (!newline_consumed) break;
             streamed_total += discard_result;
-            if (streamed_total > options.max_bytes) return;
+            if (checkLimit(ctx, file_path, options.max_bytes, streamed_total, &limit_warned)) return;
             continue;
         }
 
@@ -357,7 +376,7 @@ pub fn streamJsonLines(
 
         if (!newline_consumed) break;
         streamed_total += discard_result;
-        if (streamed_total > options.max_bytes) return;
+        if (checkLimit(ctx, file_path, options.max_bytes, streamed_total, &limit_warned)) return; // truncate but do not fail
     }
 }
 
@@ -452,7 +471,6 @@ pub fn makeProvider(comptime cfg: ProviderConfig) type {
         pub const collect = ProviderType.collect;
         pub const streamEvents = ProviderType.streamEvents;
         pub const loadPricingData = ProviderType.loadPricingData;
-        pub const EventConsumer = ProviderType.EventConsumer;
     };
 }
 
@@ -1011,12 +1029,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
     const fallback_pricing = cfg.fallback_pricing;
 
     return struct {
-        pub const EventConsumer = struct {
-            context: *anyopaque,
-            mutex: ?*std.Thread.Mutex = null,
-            ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) anyerror!void,
-        };
-
         const parse_context = ParseContext{
             .provider_name = provider_name,
             .legacy_fallback_model = legacy_fallback_model,
@@ -1035,7 +1047,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             allocator: std.mem.Allocator,
             event: *const model.TokenUsageEvent,
             filters: model.DateFilters,
-        ) anyerror!void {
+        ) model.IngestError!void {
             const ctx: *SummaryConsumer = @ptrCast(@alignCast(ctx_ptr));
             try ctx.builder.ingest(allocator, event, filters);
         }

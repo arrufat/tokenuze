@@ -1,15 +1,11 @@
 const std = @import("std");
 const model = @import("../model.zig");
 const provider = @import("provider.zig");
+const test_helpers = @import("test_helpers.zig");
+const testing = std.testing;
 
 const db_dirname = ".crush";
 const db_filename = "crush.db";
-
-pub const EventConsumer = struct {
-    context: *anyopaque,
-    mutex: ?*std.Thread.Mutex = null,
-    ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) anyerror!void,
-};
 
 pub fn collect(
     shared_allocator: std.mem.Allocator,
@@ -23,11 +19,11 @@ pub fn collect(
         builder: *model.SummaryBuilder,
     }{ .builder = summaries };
 
-    const consumer = EventConsumer{
+    const consumer = provider.EventConsumer{
         .context = @ptrCast(&summary_ctx),
         .mutex = &builder_mutex,
         .ingest = struct {
-            fn ingest(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, event: *const model.TokenUsageEvent, f: model.DateFilters) anyerror!void {
+            fn ingest(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, event: *const model.TokenUsageEvent, f: model.DateFilters) model.IngestError!void {
                 const ctx: *@TypeOf(summary_ctx) = @ptrCast(@alignCast(ctx_ptr));
                 try ctx.builder.ingest(allocator, event, f);
             }
@@ -41,7 +37,7 @@ pub fn streamEvents(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
     var db_paths = try findCrushDbPaths(shared_allocator, temp_allocator);
@@ -97,7 +93,7 @@ const WorkState = struct {
     paths: [][]u8,
     next_index: std.atomic.Value(usize),
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     shared_allocator: std.mem.Allocator,
     progress: ?std.Progress.Node,
 };
@@ -200,6 +196,16 @@ fn findCrushDbPaths(allocator: std.mem.Allocator, temp_allocator: std.mem.Alloca
     return list;
 }
 
+test "crush parses sqlite output fixture" {
+    const allocator = testing.allocator;
+    const count = try test_helpers.runFixtureParse(
+        allocator,
+        "fixtures/crush/sqlite_output.json",
+        parseRows,
+    );
+    try testing.expect(count > 0);
+}
+
 fn runSqliteQuery(allocator: std.mem.Allocator, db_path: []const u8) ![]u8 {
     // Query to get sessions with usage, joining messages to find the model.
     // We prioritize messages that have a non-empty model.
@@ -248,7 +254,7 @@ fn parseRows(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     json_payload: []const u8,
 ) !void {
     var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, json_payload, .{});
@@ -267,7 +273,7 @@ fn parseRow(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     row_value: std.json.Value,
 ) !void {
     const obj = switch (row_value) {

@@ -28,6 +28,13 @@ pub const ParseDateError = error{
     InvalidDate,
 };
 
+pub const IngestError = error{
+    OutOfMemory,
+    InvalidDate,
+    InvalidCharacter,
+    Overflow,
+};
+
 pub fn parseFilterDate(input: []const u8) ParseDateError![10]u8 {
     if (input.len != 8) return error.InvalidFormat;
 
@@ -661,7 +668,7 @@ pub const SummaryBuilder = struct {
         allocator: std.mem.Allocator,
         event: *const TokenUsageEvent,
         filters: DateFilters,
-    ) !void {
+    ) IngestError!void {
         const iso_slice = event.local_iso_date[0..];
         if (!dateWithinFilters(filters, iso_slice)) return;
 

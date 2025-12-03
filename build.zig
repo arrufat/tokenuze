@@ -4,11 +4,11 @@ const project_info = @import("build.zig.zon");
 const tokenuze_version = std.SemanticVersion.parse(project_info.version) catch unreachable;
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{
-        .default_target = .{
-            .abi = .musl,
-        },
-    });
+    const musl_static = b.option(bool, "musl", "Build a static musl binary (default: native)" ) orelse false;
+    const target = if (musl_static)
+        b.resolveTargetQuery(.{ .os_tag = .linux, .abi = .musl })
+    else
+        b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const resolved_version = resolveVersion(b);
 
@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("tokenuze", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .optimize = optimize,
         .imports = &.{
             .{ .name = "build_options", .module = build_options_module },
         },
@@ -57,26 +58,28 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    const test_module = b.createModule(.{
+    const test_module = b.addModule("tokenuze_tests", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = build_options_module },
+        },
     });
+    test_module.link_libc = true;
     const unit_tests = b.addTest(.{ .root_module = test_module });
-    unit_tests.root_module.link_libc = true;
-    unit_tests.root_module.addImport("build_options", build_options_module);
 
-    const cli_test_module = b.createModule(.{
+    const cli_test_module = b.addModule("tokenuze_cli_tests", .{
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "tokenuze", .module = mod },
+            .{ .name = "build_options", .module = build_options_module },
         },
     });
+    cli_test_module.link_libc = true;
     const cli_tests = b.addTest(.{ .root_module = cli_test_module });
-    cli_tests.root_module.link_libc = true;
-    cli_tests.root_module.addImport("build_options", build_options_module);
 
     const test_step = b.step("test", "Run unit tests");
     const test_cmd = b.addRunArtifact(unit_tests);
