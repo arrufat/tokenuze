@@ -106,9 +106,7 @@ fn parseThreadPayload(
 
         var entry = UsageEntry{};
         if (usage_obj.get("model")) |model_val| {
-            if (model_val == .string) {
-                entry.model = usage_obj.get("model").?.string;
-            }
+            if (model_val == .string) entry.model = model_val.string;
         }
 
         var total_input_override: ?u64 = null;
