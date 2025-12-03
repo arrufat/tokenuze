@@ -4,6 +4,12 @@ const timeutil = @import("../time.zig");
 const io_util = @import("../io_util.zig");
 const http_client = @import("../http_client.zig");
 
+pub const EventConsumer = struct {
+    context: *anyopaque,
+    mutex: ?*std.Thread.Mutex = null,
+    ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) anyerror!void,
+};
+
 pub const FallbackPricingEntry = struct {
     name: []const u8,
     pricing: model.ModelPricing,
@@ -314,6 +320,8 @@ pub fn streamJsonLines(
     var streamed_total: usize = 0;
     var line_index: usize = 0;
 
+    var limit_warned = false;
+
     while (true) {
         partial_line.clearRetainingCapacity();
         var writer_ctx = io_util.ArrayWriter.init(&partial_line, allocator);
@@ -339,7 +347,13 @@ pub fn streamJsonLines(
         }
 
         streamed_total += streamed;
-        if (streamed_total > options.max_bytes) return;
+        if (streamed_total > options.max_bytes) {
+            if (!limit_warned) {
+                ctx.logWarning(file_path, "session stream exceeded max_bytes; stopping early", error.ResponseLimitExceeded);
+                limit_warned = true;
+            }
+            return error.StreamLimitExceeded;
+        }
 
         var line_slice: []const u8 = partial_line.items;
         if (options.trim_lines) {
@@ -357,7 +371,13 @@ pub fn streamJsonLines(
 
         if (!newline_consumed) break;
         streamed_total += discard_result;
-        if (streamed_total > options.max_bytes) return;
+        if (streamed_total > options.max_bytes) {
+            if (!limit_warned) {
+                ctx.logWarning(file_path, "session stream exceeded max_bytes; stopping early", error.ResponseLimitExceeded);
+                limit_warned = true;
+            }
+            return error.StreamLimitExceeded;
+        }
     }
 }
 
@@ -452,7 +472,6 @@ pub fn makeProvider(comptime cfg: ProviderConfig) type {
         pub const collect = ProviderType.collect;
         pub const streamEvents = ProviderType.streamEvents;
         pub const loadPricingData = ProviderType.loadPricingData;
-        pub const EventConsumer = ProviderType.EventConsumer;
     };
 }
 
@@ -1011,12 +1030,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
     const fallback_pricing = cfg.fallback_pricing;
 
     return struct {
-        pub const EventConsumer = struct {
-            context: *anyopaque,
-            mutex: ?*std.Thread.Mutex = null,
-            ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) anyerror!void,
-        };
-
         const parse_context = ParseContext{
             .provider_name = provider_name,
             .legacy_fallback_model = legacy_fallback_model,

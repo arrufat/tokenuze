@@ -1,15 +1,10 @@
 const std = @import("std");
 const model = @import("../model.zig");
 const provider = @import("provider.zig");
+const testing = std.testing;
 
 const db_dirname = ".crush";
 const db_filename = "crush.db";
-
-pub const EventConsumer = struct {
-    context: *anyopaque,
-    mutex: ?*std.Thread.Mutex = null,
-    ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) anyerror!void,
-};
 
 pub fn collect(
     shared_allocator: std.mem.Allocator,
@@ -23,7 +18,7 @@ pub fn collect(
         builder: *model.SummaryBuilder,
     }{ .builder = summaries };
 
-    const consumer = EventConsumer{
+    const consumer = provider.EventConsumer{
         .context = @ptrCast(&summary_ctx),
         .mutex = &builder_mutex,
         .ingest = struct {
@@ -41,7 +36,7 @@ pub fn streamEvents(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
     var db_paths = try findCrushDbPaths(shared_allocator, temp_allocator);
@@ -97,7 +92,7 @@ const WorkState = struct {
     paths: [][]u8,
     next_index: std.atomic.Value(usize),
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     shared_allocator: std.mem.Allocator,
     progress: ?std.Progress.Node,
 };
@@ -200,6 +195,44 @@ fn findCrushDbPaths(allocator: std.mem.Allocator, temp_allocator: std.mem.Alloca
     return list;
 }
 
+test "crush parses sqlite output fixture" {
+    const allocator = testing.allocator;
+    const json_payload = try std.fs.cwd().readFileAlloc(
+        "fixtures/crush/sqlite_output.json",
+        allocator,
+        std.Io.Limit.limited(1 << 20),
+    );
+    defer allocator.free(json_payload);
+
+    var events = std.ArrayList(model.TokenUsageEvent).empty;
+    defer {
+        for (events.items) |ev| {
+            allocator.free(ev.session_id);
+            allocator.free(ev.timestamp);
+            allocator.free(ev.model);
+        }
+        events.deinit(allocator);
+    }
+
+    const consumer = provider.EventConsumer{
+        .context = &events,
+        .ingest = struct {
+            fn ingest(ctx_ptr: *anyopaque, alloc: std.mem.Allocator, event: *const model.TokenUsageEvent, filters: model.DateFilters) anyerror!void {
+                _ = filters;
+                const list: *std.ArrayList(model.TokenUsageEvent) = @ptrCast(@alignCast(ctx_ptr));
+                var copy = event.*;
+                copy.session_id = try alloc.dupe(u8, event.session_id);
+                copy.timestamp = try alloc.dupe(u8, event.timestamp);
+                copy.model = try alloc.dupe(u8, event.model);
+                try list.append(alloc, copy);
+            }
+        }.ingest,
+    };
+
+    try parseRows(allocator, allocator, .{}, consumer, json_payload);
+    try testing.expect(events.items.len > 0);
+}
+
 fn runSqliteQuery(allocator: std.mem.Allocator, db_path: []const u8) ![]u8 {
     // Query to get sessions with usage, joining messages to find the model.
     // We prioritize messages that have a non-empty model.
@@ -248,7 +281,7 @@ fn parseRows(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     json_payload: []const u8,
 ) !void {
     var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, json_payload, .{});
@@ -267,7 +300,7 @@ fn parseRow(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     row_value: std.json.Value,
 ) !void {
     const obj = switch (row_value) {

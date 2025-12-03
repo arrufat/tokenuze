@@ -6,18 +6,13 @@ const RawUsage = model.RawTokenUsage;
 const UsageAccumulator = model.UsageAccumulator;
 const usageFieldForKey = model.usageFieldForKey;
 const parseTokenNumber = model.parseTokenNumber;
+const testing = std.testing;
 
 const db_path_parts = [_][]const u8{ ".local", "share", "zed", "threads", "threads.db" };
 const parse_ctx = provider.ParseContext{
     .provider_name = "zed",
     .legacy_fallback_model = null,
     .cached_counts_overlap_input = false,
-};
-
-pub const EventConsumer = struct {
-    context: *anyopaque,
-    mutex: ?*std.Thread.Mutex = null,
-    ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) anyerror!void,
 };
 
 pub fn collect(
@@ -32,7 +27,7 @@ pub fn collect(
         builder: *model.SummaryBuilder,
     }{ .builder = summaries };
 
-    const consumer = EventConsumer{
+    const consumer = provider.EventConsumer{
         .context = @ptrCast(&summary_ctx),
         .mutex = &builder_mutex,
         .ingest = struct {
@@ -50,7 +45,7 @@ pub fn streamEvents(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
     _ = progress;
@@ -122,7 +117,7 @@ fn parseRows(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     json_payload: []const u8,
 ) !void {
     var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, json_payload, .{});
@@ -141,7 +136,7 @@ fn parseRow(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     row_value: std.json.Value,
 ) !void {
     const obj = switch (row_value) {
@@ -199,6 +194,44 @@ fn getObjectString(allocator: std.mem.Allocator, obj: std.json.ObjectMap, key: [
     return null;
 }
 
+test "zed parses sqlite output fixture" {
+    const allocator = testing.allocator;
+    const json_payload = try std.fs.cwd().readFileAlloc(
+        "fixtures/zed/sqlite_output.json",
+        allocator,
+        std.Io.Limit.limited(1 << 20),
+    );
+    defer allocator.free(json_payload);
+
+    var events = std.ArrayList(model.TokenUsageEvent).empty;
+    defer {
+        for (events.items) |ev| {
+            allocator.free(ev.session_id);
+            allocator.free(ev.timestamp);
+            allocator.free(ev.model);
+        }
+        events.deinit(allocator);
+    }
+
+    const consumer = provider.EventConsumer{
+        .context = &events,
+        .ingest = struct {
+            fn ingest(ctx_ptr: *anyopaque, alloc: std.mem.Allocator, event: *const model.TokenUsageEvent, filters: model.DateFilters) anyerror!void {
+                _ = filters;
+                const list: *std.ArrayList(model.TokenUsageEvent) = @ptrCast(@alignCast(ctx_ptr));
+                var copy = event.*;
+                copy.session_id = try alloc.dupe(u8, event.session_id);
+                copy.timestamp = try alloc.dupe(u8, event.timestamp);
+                copy.model = try alloc.dupe(u8, event.model);
+                try list.append(alloc, copy);
+            }
+        }.ingest,
+    };
+
+    try parseRows(allocator, allocator, .{}, consumer, json_payload);
+    try testing.expect(events.items.len > 0);
+}
+
 fn decompressIfNeeded(allocator: std.mem.Allocator, blob: []const u8, data_type: []const u8) ![]u8 {
     if (std.mem.eql(u8, data_type, "zstd") or data_type.len == 0) {
         return decompressZstd(allocator, blob);
@@ -221,7 +254,7 @@ fn parseThread(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     thread_id: []const u8,
     updated_at: []const u8,
     json_bytes: []const u8,
@@ -266,7 +299,7 @@ fn parseRequestUsageValue(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     val: std.json.Value,
     thread_id: []const u8,
     updated_at: []const u8,
@@ -290,7 +323,7 @@ fn parseUsageEntryValue(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
-    consumer: EventConsumer,
+    consumer: provider.EventConsumer,
     req_id: []const u8,
     usage_val: std.json.Value,
     thread_id: []const u8,
