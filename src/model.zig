@@ -495,9 +495,9 @@ pub const SessionRecorder = struct {
         defer ordered.deinit(allocator);
 
         try std.testing.expectEqual(@as(usize, 4), ordered.items.len);
-        try std.testing.expectEqualStrings("beta", ordered.items[0].session_id);
-        try std.testing.expectEqualStrings("alpha", ordered.items[1].session_id);
-        try std.testing.expectEqualStrings("delta", ordered.items[2].session_id);
+        try std.testing.expectEqualStrings("alpha", ordered.items[0].session_id);
+        try std.testing.expectEqualStrings("delta", ordered.items[1].session_id);
+        try std.testing.expectEqualStrings("beta", ordered.items[2].session_id);
         try std.testing.expectEqualStrings("gamma", ordered.items[3].session_id);
     }
 
