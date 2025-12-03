@@ -10,12 +10,13 @@ The output is a table or JSON, suitable for dashboards.
 - Network access to fetch remote pricing / uploading stats (optional)
 
 ## Supported Providers
-- Claude Code: `~/.claude/projects`
-- Codex: `~/.codex/sessions`
-- Crush: `.crush/crush.db` (project-based, recursively crawled)
-- Gemini CLI: `~/.gemini/tmp`
-- Opencode: `~/.local/share/opencode/storage/session`
-- Zed: `~/.local/share/zed/threads/threads.db`
+- [Amp](https://ampcode.com/): `~/.local/share/amp/threads`
+- [Claude Code](https://www.claude.com/product/claude-code): `~/.claude/projects`
+- [Codex CLI](https://developers.openai.com/codex/cli/): `~/.codex/sessions`
+- [Crush](https://github.com/charmbracelet/crush): `.crush/crush.db` (project-based, recursively crawled)
+- [Gemini CLI](https://geminicli.com/): `~/.gemini/tmp`
+- [Opencode](https://opencode.ai/): `~/.local/share/opencode/storage/session`
+- [Zed](https://zed.dev/): `~/.local/share/zed/threads/threads.db`
 
 ## Installation
 ```bash
