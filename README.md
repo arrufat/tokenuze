@@ -5,7 +5,7 @@ It scans session logs, aggregates token counts, and reports pricing.
 The output is a table or JSON, suitable for dashboards.
 
 ## Requirements
-- Zig 0.16.0-dev.1456+16fc083f2 (for building from source)
+- Zig 0.16.0-dev.1456+16fc083f2 or newer (if building from source)
 - `sqlite3` in your `PATH` (for Zed and Crush providers)
 - Network access to fetch remote pricing / uploading stats (optional)
 
@@ -19,21 +19,29 @@ The output is a table or JSON, suitable for dashboards.
 - [Zed](https://zed.dev/): `~/.local/share/zed/threads/threads.db`
 
 ## Installation
+
+- **Prebuilt binaries:** grab the latest release from the [Releases page](https://github.com/bfactory-ai/tokenuze/releases) and put `tokenuze` on your `PATH`.
+- **Build from source:** requires Zig 0.16.0-dev.1456+16fc083f2 or newer
+
 ```bash
 git clone https://github.com/bfactory-ai/tokenuze.git
 cd tokenuze
-zig build --release=fast
+zig build --release=fast  # binary will be in zig-out/bin/
 ```
 
 ## Quick Start
 ```bash
-./zig-out/bin/tokenuze --upload  # upload usage across all supported models
-./zig-out/bin/tokenuze --upload --agent gemini --agent opencode  # request specific agents
-./zig-out/bin/tokenuze --since 20250101 --until 20250107  # filter a specific date range
-./zig-out/bin/tokenuze --sessions --since 20250101  # print per-session table (default)
-./zig-out/bin/tokenuze --sessions --since 20250101 --json --pretty  # print per-session JSON
-./zig-out/bin/tokenuze --help  # display all usage options
+tokenuze --upload  # upload usage across all supported models
+tokenuze --upload --agent gemini --agent opencode  # request specific agents
+tokenuze --since 20250101 --until 20250107  # filter a specific date range
+tokenuze --sessions --since 20250101  # print per-session table (default)
+tokenuze --sessions --since 20250101 --json --pretty  # print per-session JSON
+tokenuze --help  # display all usage options
 ```
+
+### JSON Output Sample
+
+<details>
 
 ```json
 {
@@ -93,9 +101,11 @@ zig build --release=fast
   }
 }
 ```
-</details>
 
 Missing pricing entries are listed under `missing_pricing`.
+
+</details>
+
 
 ## Extending
 To add a new provider:
