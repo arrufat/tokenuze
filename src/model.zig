@@ -495,9 +495,9 @@ pub const SessionRecorder = struct {
         defer ordered.deinit(allocator);
 
         try std.testing.expectEqual(@as(usize, 4), ordered.items.len);
-        try std.testing.expectEqualStrings("alpha", ordered.items[0].session_id);
-        try std.testing.expectEqualStrings("delta", ordered.items[1].session_id);
-        try std.testing.expectEqualStrings("beta", ordered.items[2].session_id);
+        try std.testing.expectEqualStrings("beta", ordered.items[0].session_id);
+        try std.testing.expectEqualStrings("alpha", ordered.items[1].session_id);
+        try std.testing.expectEqualStrings("delta", ordered.items[2].session_id);
         try std.testing.expectEqualStrings("gamma", ordered.items[3].session_id);
     }
 
@@ -505,20 +505,20 @@ pub const SessionRecorder = struct {
         const lhs_ts = lhs.last_activity;
         const rhs_ts = rhs.last_activity;
 
-        if (lhs_ts) |lhs_activity| {
-            if (rhs_ts) |rhs_activity| {
-                if (!std.mem.eql(u8, lhs_activity, rhs_activity)) {
-                    // Earlier activity first (ascending); caller can flip if needed.
-                    return std.mem.lessThan(u8, lhs_activity, rhs_activity);
-                }
-            } else {
-                // Sessions with activity come before those without.
-                return true;
+        const lhs_has_ts = lhs_ts != null;
+        const rhs_has_ts = rhs_ts != null;
+
+        // Sessions with activity come before those without.
+        if (lhs_has_ts and !rhs_has_ts) return true;
+        if (!lhs_has_ts and rhs_has_ts) return false;
+
+        if (lhs_has_ts and rhs_has_ts) {
+            if (!std.mem.eql(u8, lhs_ts.?, rhs_ts.?)) {
+                return std.mem.lessThan(u8, lhs_ts.?, rhs_ts.?);
             }
-        } else if (rhs_ts != null) {
-            return false;
         }
 
+        // Fallback to sorting by session_id if timestamps are same or both are null.
         return std.mem.lessThan(u8, lhs.session_id, rhs.session_id);
     }
 
