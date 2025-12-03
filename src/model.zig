@@ -1014,8 +1014,9 @@ fn createHyphenBasenameVariant(
     allocator: std.mem.Allocator,
     source: []const u8,
 ) !?[]u8 {
-    const base = try createBasenameVariant(allocator, source) orelse return null;
-    defer allocator.free(base);
+    const last_slash = std.mem.findScalarLast(u8, source, '/') orelse return null;
+    if (last_slash + 1 >= source.len) return null;
+    const base = source[last_slash + 1 ..];
     return createHyphenVariant(allocator, base);
 }
 
