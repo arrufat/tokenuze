@@ -467,7 +467,52 @@ pub const SessionRecorder = struct {
         return list;
     }
 
+    test "sortedSessions orders by last activity" {
+        const allocator = std.testing.allocator;
+        var recorder = SessionRecorder.init(allocator);
+        defer recorder.deinit(allocator);
+
+        var first = try recorder.sessions.getOrPut("alpha");
+        first.key_ptr.* = try allocator.dupe(u8, "alpha");
+        first.value_ptr.* = SessionEntry.init("alpha", "", "");
+        try first.value_ptr.updateLastActivity(allocator, "2025-01-01T00:00:00Z");
+
+        var second = try recorder.sessions.getOrPut("beta");
+        second.key_ptr.* = try allocator.dupe(u8, "beta");
+        second.value_ptr.* = SessionEntry.init("beta", "", "");
+        try second.value_ptr.updateLastActivity(allocator, "2025-01-02T00:00:00Z");
+
+        var third = try recorder.sessions.getOrPut("gamma");
+        third.key_ptr.* = try allocator.dupe(u8, "gamma");
+        third.value_ptr.* = SessionEntry.init("gamma", "", "");
+
+        var ordered = try recorder.sortedSessions(allocator);
+        defer ordered.deinit(allocator);
+
+        try std.testing.expectEqual(@as(usize, 3), ordered.items.len);
+        try std.testing.expectEqualStrings("alpha", ordered.items[0].session_id);
+        try std.testing.expectEqualStrings("beta", ordered.items[1].session_id);
+        try std.testing.expectEqualStrings("gamma", ordered.items[2].session_id);
+    }
+
     fn sessionLessThan(_: void, lhs: *const SessionEntry, rhs: *const SessionEntry) bool {
+        const lhs_ts = lhs.last_activity;
+        const rhs_ts = rhs.last_activity;
+
+        if (lhs_ts) |lhs_activity| {
+            if (rhs_ts) |rhs_activity| {
+                if (!std.mem.eql(u8, lhs_activity, rhs_activity)) {
+                    // Earlier activity first (ascending); caller can flip if needed.
+                    return std.mem.lessThan(u8, lhs_activity, rhs_activity);
+                }
+            } else {
+                // Sessions with activity come before those without.
+                return true;
+            }
+        } else if (rhs_ts != null) {
+            return false;
+        }
+
         return std.mem.lessThan(u8, lhs.session_id, rhs.session_id);
     }
 
