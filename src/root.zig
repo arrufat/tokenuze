@@ -407,6 +407,12 @@ pub fn providerPathInfos(allocator: std.mem.Allocator) !std.ArrayList(ProviderPa
         try list.append(allocator, .{ .name = spec.name, .path = resolved });
     }
 
+    std.mem.sort(ProviderPathInfo, list.items, {}, struct {
+        fn lessThan(_: void, a: ProviderPathInfo, b: ProviderPathInfo) bool {
+            return std.mem.lessThan(u8, a.name, b.name);
+        }
+    }.lessThan);
+
     return list;
 }
 
