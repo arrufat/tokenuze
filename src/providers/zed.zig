@@ -1,15 +1,19 @@
 const std = @import("std");
-const model = @import("../model.zig");
-const provider = @import("provider.zig");
+const testing = std.testing;
+const assert = std.debug.assert;
+const builtin = @import("builtin");
 
+const model = @import("../model.zig");
 const RawUsage = model.RawTokenUsage;
 const UsageAccumulator = model.UsageAccumulator;
 const usageFieldForKey = model.usageFieldForKey;
 const parseTokenNumber = model.parseTokenNumber;
+const provider = @import("provider.zig");
 const test_helpers = @import("test_helpers.zig");
-const testing = std.testing;
 
-const db_path_parts = [_][]const u8{ ".local", "share", "zed", "threads", "threads.db" };
+const linux_parts = [_][]const u8{ ".local", "share", "zed", "threads", "threads.db" };
+const mac_parts = [_][]const u8{ "Library", "Application Support", "Zed", "threads", "threads.db" };
+const windows_parts = [_][]const u8{ "Zed", "threads", "threads.db" };
 const parse_ctx = provider.ParseContext{
     .provider_name = "zed",
     .legacy_fallback_model = null,
@@ -73,12 +77,31 @@ pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.Pric
 }
 
 fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
-    const home = std.process.getEnvVarOwned(allocator, "HOME") catch return error.MissingHome;
-    defer allocator.free(home);
-    var parts: [db_path_parts.len + 1][]const u8 = undefined;
-    parts[0] = home;
-    for (db_path_parts, 0..) |p, i| parts[i + 1] = p;
-    return std.fs.path.join(allocator, &parts);
+    const os_tag = builtin.target.os.tag;
+    switch (os_tag) {
+        .windows => {
+            const local_app_data = std.process.getEnvVarOwned(allocator, "LOCALAPPDATA") catch return error.MissingLocalAppData;
+            defer allocator.free(local_app_data);
+
+            var parts: [windows_parts.len + 1][]const u8 = undefined;
+            parts[0] = local_app_data;
+            for (windows_parts, 0..) |p, i| parts[i + 1] = p;
+            return std.fs.path.join(allocator, &parts);
+        },
+        .macos, .linux => {
+            const home = std.process.getEnvVarOwned(allocator, "HOME") catch return error.MissingHome;
+            defer allocator.free(home);
+
+            const sub_parts = if (os_tag == .macos) &mac_parts else &linux_parts;
+            comptime assert(mac_parts.len == linux_parts.len);
+
+            var parts: [mac_parts.len + 1][]const u8 = undefined;
+            parts[0] = home;
+            for (sub_parts, 0..) |p, i| parts[i + 1] = p;
+            return std.fs.path.join(allocator, &parts);
+        },
+        else => @compileError("zed provider does not support this OS"),
+    }
 }
 
 fn runSqliteQuery(allocator: std.mem.Allocator, db_path: []const u8) ![]u8 {
