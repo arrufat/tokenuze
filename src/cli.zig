@@ -13,6 +13,7 @@ pub const CliOptions = struct {
     machine_id: bool = false,
     show_help: bool = false,
     show_version: bool = false,
+    list_agents: bool = false,
     providers: tokenuze.ProviderSelection = tokenuze.ProviderSelection.initAll(),
     upload: bool = false,
     output_explicit: bool = false,
@@ -34,6 +35,7 @@ const OptionId = enum {
     machine_id,
     version,
     help,
+    list_agents,
 };
 
 const OptionArgKind = enum {
@@ -58,10 +60,11 @@ const option_specs = [_]OptionSpec{
     .{ .id = .json, .long_name = "json", .desc = "Render usage as JSON instead of the table" },
     .{ .id = .pretty, .long_name = "pretty", .desc = "Expand JSON output for readability" },
     .{ .id = .sessions, .long_name = "sessions", .desc = "Render session-level output (table or JSON with --json)" },
-    .{ .id = .agent, .long_name = "agent", .value_name = "<name>", .desc = "Restrict collection to selected providers (available: {s})", .kind = .value },
+    .{ .id = .agent, .long_name = "agent", .value_name = "<name>", .desc = "Restrict collection to selected providers, repeatable", .kind = .value },
     .{ .id = .log_level, .long_name = "log-level", .value_name = "LEVEL", .desc = "Control logging verbosity (error|warn|info|debug)", .kind = .value },
     .{ .id = .upload, .long_name = "upload", .desc = "Upload Tokenuze JSON via DASHBOARD_API_KEY and DASHBOARD_API_URL envs" },
     .{ .id = .machine_id, .long_name = "machine-id", .desc = "Print the machine id and exit" },
+    .{ .id = .list_agents, .long_name = "list-agents", .desc = "List supported agents and their usage paths" },
     .{ .id = .version, .long_name = "version", .desc = "Print version number and exit" },
     .{ .id = .help, .long_name = "help", .short_name = 'h', .desc = "Show this message and exit" },
 };
@@ -187,6 +190,36 @@ pub fn printVersion(version: []const u8) !void {
     };
 }
 
+pub fn printAgentList(allocator: std.mem.Allocator) !void {
+    var infos = try tokenuze.providerPathInfos(allocator);
+    defer {
+        for (infos.items) |info| allocator.free(info.path);
+        infos.deinit(allocator);
+    }
+
+    var max_name: usize = 0;
+    for (infos.items) |info| {
+        if (info.name.len > max_name) max_name = info.name.len;
+    }
+
+    var buffer: [1024]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&buffer);
+    const writer = &stdout.interface;
+    try writer.print("Supported agents:\n", .{});
+    for (infos.items) |info| {
+        const padding = if (info.name.len < max_name) max_name - info.name.len else 0;
+        try writer.writeAll("  ");
+        try writer.writeAll(info.name);
+        var pad = padding;
+        while (pad > 0) : (pad -= 1) try writer.writeByte(' ');
+        try writer.print("  {s}\n", .{info.path});
+    }
+    writer.flush() catch |err| switch (err) {
+        error.WriteFailed => {},
+        else => return err,
+    };
+}
+
 fn optionSpecs() []const OptionSpec {
     return option_specs[0..];
 }
@@ -253,6 +286,7 @@ fn applyOption(
             options.sessions = true;
             options.output_explicit = true;
         },
+        .list_agents => options.list_agents = true,
         .log_level => {
             const value = args.next() orelse return missingValueError(spec.long_name);
             options.log_level = try parseLogLevelArg(value);
@@ -305,11 +339,6 @@ fn missingValueError(name: []const u8) CliError {
 
 fn optionDescription(spec: *const OptionSpec, tz_label: []const u8, buffer: []u8) []const u8 {
     return switch (spec.id) {
-        .agent => std.fmt.bufPrint(
-            buffer,
-            "Restrict collection to selected providers (available: {s})",
-            .{providerListDescription()},
-        ) catch spec.desc,
         .tz => std.fmt.bufPrint(
             buffer,
             "Bucket dates in the provided timezone (default: {s})",
@@ -457,6 +486,12 @@ test "cli parses --json" {
     const options = try parseOptionsIterator(&iter);
     try testing.expect(options.filters.output_format == .json);
     try testing.expect(options.output_explicit);
+}
+
+test "cli parses --list-agents" {
+    var iter = TestIterator.init(&.{"--list-agents"});
+    const options = try parseOptionsIterator(&iter);
+    try testing.expect(options.list_agents);
 }
 
 test "cli parses --sessions" {

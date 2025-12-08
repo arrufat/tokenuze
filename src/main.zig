@@ -38,6 +38,10 @@ pub fn main() !void {
         try cli.printVersion(build_options.version);
         return;
     }
+    if (options.list_agents) {
+        try cli.printAgentList(allocator);
+        return;
+    }
     if (options.machine_id) {
         try printMachineId(allocator);
         return;

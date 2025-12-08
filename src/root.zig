@@ -65,11 +65,14 @@ const LoadPricingFn = *const fn (
     *model.PricingMap,
 ) anyerror!void;
 
+const PathHintFn = *const fn (std.mem.Allocator) anyerror![]u8;
+
 pub const ProviderSpec = struct {
     name: []const u8,
     phase_label: []const u8,
     collect: CollectFn,
     load_pricing: LoadPricingFn,
+    path_hint: PathHintFn,
 };
 
 pub const providers = [_]ProviderSpec{
@@ -78,42 +81,49 @@ pub const providers = [_]ProviderSpec{
         .phase_label = "collect_claude",
         .collect = claude.collect,
         .load_pricing = claude.loadPricingData,
+        .path_hint = claude.sessionsPath,
     },
     .{
         .name = "codex",
         .phase_label = "collect_codex",
         .collect = codex.collect,
         .load_pricing = codex.loadPricingData,
+        .path_hint = codex.sessionsPath,
     },
     .{
         .name = "amp",
         .phase_label = "collect_amp",
         .collect = amp.collect,
         .load_pricing = amp.loadPricingData,
+        .path_hint = amp.sessionsPath,
     },
     .{
         .name = "gemini",
         .phase_label = "collect_gemini",
         .collect = gemini.collect,
         .load_pricing = gemini.loadPricingData,
+        .path_hint = gemini.sessionsPath,
     },
     .{
         .name = "opencode",
         .phase_label = "collect_opencode",
         .collect = opencode.collect,
         .load_pricing = opencode.loadPricingData,
+        .path_hint = opencode.sessionsPath,
     },
     .{
         .name = "zed",
         .phase_label = "collect_zed",
-        .collect = @import("providers/zed.zig").collect,
-        .load_pricing = @import("providers/zed.zig").loadPricingData,
+        .collect = zed.collect,
+        .load_pricing = zed.loadPricingData,
+        .path_hint = zed.pathHint,
     },
     .{
         .name = "crush",
         .phase_label = "collect_crush",
         .collect = crush.collect,
         .load_pricing = crush.loadPricingData,
+        .path_hint = crush.pathHint,
     },
 };
 
@@ -375,6 +385,29 @@ fn describeSelectedProviders(selection: ProviderSelection, buffer: []u8) Provide
 
 pub fn providerListDescription(buffer: []u8) []const u8 {
     return describeSelectedProviders(ProviderSelection.initAll(), buffer).names;
+}
+
+pub const ProviderPathInfo = struct {
+    name: []const u8,
+    path: []const u8,
+};
+
+pub fn providerPathInfos(allocator: std.mem.Allocator) !std.ArrayList(ProviderPathInfo) {
+    var list: std.ArrayList(ProviderPathInfo) = .empty;
+    errdefer {
+        for (list.items) |info| allocator.free(info.path);
+        list.deinit(allocator);
+    }
+
+    for (providers) |spec| {
+        const resolved = spec.path_hint(allocator) catch |err| blk: {
+            const note = try std.fmt.allocPrint(allocator, "unavailable: {s}", .{@errorName(err)});
+            break :blk note;
+        };
+        try list.append(allocator, .{ .name = spec.name, .path = resolved });
+    }
+
+    return list;
 }
 
 fn startProgressNode(parent: ?*std.Progress.Node, label: []const u8, total_items: usize) std.Progress.Node {

@@ -7,6 +7,10 @@ const testing = std.testing;
 const db_dirname = ".crush";
 const db_filename = "crush.db";
 
+pub fn pathHint(allocator: std.mem.Allocator) ![]u8 {
+    return allocator.dupe(u8, ".crush/crush.db (searched recursively from cwd)");
+}
+
 pub fn collect(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,

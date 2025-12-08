@@ -35,6 +35,7 @@ pub const collect = ProviderExports.collect;
 pub const streamEvents = ProviderExports.streamEvents;
 pub const loadPricingData = ProviderExports.loadPricingData;
 pub const EventConsumer = ProviderExports.EventConsumer;
+pub const sessionsPath = ProviderExports.sessionsPath;
 
 const PayloadResult = struct {
     model: ?TokenSlice = null,

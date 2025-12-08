@@ -76,6 +76,10 @@ pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.Pric
     _ = pricing;
 }
 
+pub fn pathHint(allocator: std.mem.Allocator) ![]u8 {
+    return resolveDbPath(allocator);
+}
+
 fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
     const os_tag = builtin.target.os.tag;
     switch (os_tag) {

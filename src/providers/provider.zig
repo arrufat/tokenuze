@@ -471,6 +471,7 @@ pub fn makeProvider(comptime cfg: ProviderConfig) type {
         pub const collect = ProviderType.collect;
         pub const streamEvents = ProviderType.streamEvents;
         pub const loadPricingData = ProviderType.loadPricingData;
+        pub const sessionsPath = ProviderType.sessionsPath;
     };
 }
 
@@ -1108,6 +1109,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 const key = try shared_allocator.dupe(u8, fallback.name);
                 try pricing.put(key, fallback.pricing);
             }
+        }
+
+        pub fn sessionsPath(allocator: std.mem.Allocator) ![]u8 {
+            return resolveSessionsDir(allocator);
         }
 
         fn logSessionWarning(file_path: []const u8, message: []const u8, err: anyerror) void {

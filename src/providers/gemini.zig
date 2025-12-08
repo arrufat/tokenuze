@@ -60,6 +60,7 @@ const ProviderExports = provider.makeProvider(.{
 
 pub const collect = ProviderExports.collect;
 pub const loadPricingData = ProviderExports.loadPricingData;
+pub const sessionsPath = ProviderExports.sessionsPath;
 
 const ParseState = struct {
     allocator: std.mem.Allocator,
