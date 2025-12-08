@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const assert = std.debug.assert;
 const builtin = @import("builtin");
 
 const model = @import("../model.zig");
@@ -79,7 +80,7 @@ fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
     const os_tag = builtin.target.os.tag;
     switch (os_tag) {
         .windows => {
-            const local_app_data = std.process.getEnvVarOwned(allocator, "LOCALAPPDATA") catch return error.MissingHome;
+            const local_app_data = std.process.getEnvVarOwned(allocator, "LOCALAPPDATA") catch return error.MissingLocalAppData;
             defer allocator.free(local_app_data);
 
             var parts: [windows_parts.len + 1][]const u8 = undefined;
@@ -87,24 +88,19 @@ fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
             for (windows_parts, 0..) |p, i| parts[i + 1] = p;
             return std.fs.path.join(allocator, &parts);
         },
-        .macos, .ios, .watchos, .tvos => {
+        .macos, .linux => {
             const home = std.process.getEnvVarOwned(allocator, "HOME") catch return error.MissingHome;
             defer allocator.free(home);
+
+            const sub_parts = if (os_tag == .macos) &mac_parts else &linux_parts;
+            comptime assert(mac_parts.len == linux_parts.len);
 
             var parts: [mac_parts.len + 1][]const u8 = undefined;
             parts[0] = home;
-            for (mac_parts, 0..) |p, i| parts[i + 1] = p;
+            for (sub_parts, 0..) |p, i| parts[i + 1] = p;
             return std.fs.path.join(allocator, &parts);
         },
-        else => {
-            const home = std.process.getEnvVarOwned(allocator, "HOME") catch return error.MissingHome;
-            defer allocator.free(home);
-
-            var parts: [linux_parts.len + 1][]const u8 = undefined;
-            parts[0] = home;
-            for (linux_parts, 0..) |p, i| parts[i + 1] = p;
-            return std.fs.path.join(allocator, &parts);
-        },
+        else => @compileError("zed provider does not support this OS"),
     }
 }
 
