@@ -1,10 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const tokenuze = @import("tokenuze");
-const cli = @import("cli.zig");
 const build_options = @import("build_options");
 
+const tokenuze = @import("tokenuze");
 pub const std_options: std.Options = tokenuze.std_options;
+
+const cli = @import("cli.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 

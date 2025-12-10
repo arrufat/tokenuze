@@ -1,8 +1,8 @@
 const std = @import("std");
+const testing = std.testing;
+
 const model = @import("../model.zig");
 const provider = @import("provider.zig");
-const test_helpers = @import("test_helpers.zig");
-const testing = std.testing;
 
 const fallback_pricing = [_]provider.FallbackPricingEntry{};
 

@@ -1,6 +1,6 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const windows = std.os.windows;
+const builtin = @import("builtin");
 
 const c = @cImport({
     @cInclude("time.h");

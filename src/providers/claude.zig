@@ -1,8 +1,8 @@
 const std = @import("std");
-const model = @import("../model.zig");
-const provider = @import("provider.zig");
 
+const model = @import("../model.zig");
 const RawUsage = model.RawTokenUsage;
+const provider = @import("provider.zig");
 const MessageDeduper = provider.MessageDeduper;
 const ModelState = provider.ModelState;
 

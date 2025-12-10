@@ -1,9 +1,11 @@
 const std = @import("std");
-const machine_id = @import("machine_id.zig");
-const io_util = @import("io_util.zig");
-const timeutil = @import("time.zig");
-const identity = @import("identity.zig");
+
 const http_client = @import("http_client.zig");
+const HttpResponse = http_client.Response;
+const identity = @import("identity.zig");
+const io_util = @import("io_util.zig");
+const machine_id = @import("machine_id.zig");
+const timeutil = @import("time.zig");
 
 pub const ProviderUpload = struct {
     name: []const u8,
@@ -95,8 +97,6 @@ fn reportMissingApiKey() noreturn {
     std.debug.print("   (optionally set DASHBOARD_API_URL for non-default endpoints)\n", .{});
     std.process.exit(1);
 }
-
-const HttpResponse = http_client.Response;
 
 fn sendPayload(
     allocator: std.mem.Allocator,

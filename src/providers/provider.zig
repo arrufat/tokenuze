@@ -1,8 +1,10 @@
 const std = @import("std");
+
+const http_client = @import("../http_client.zig");
+const io_util = @import("../io_util.zig");
 const model = @import("../model.zig");
 const timeutil = @import("../time.zig");
-const io_util = @import("../io_util.zig");
-const http_client = @import("../http_client.zig");
+const nsToMs = timeutil.nsToMs;
 
 pub const EventConsumer = struct {
     context: *anyopaque,
@@ -513,8 +515,6 @@ pub fn loadRemotePricing(
     }
     return stats;
 }
-
-const nsToMs = timeutil.nsToMs;
 
 fn fetchRemotePricing(
     shared_allocator: std.mem.Allocator,

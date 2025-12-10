@@ -1,8 +1,8 @@
 const std = @import("std");
-const model = @import("../model.zig");
-const provider = @import("provider.zig");
 
+const model = @import("../model.zig");
 const RawUsage = model.RawTokenUsage;
+const provider = @import("provider.zig");
 const ModelState = provider.ModelState;
 
 const GEMINI_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{

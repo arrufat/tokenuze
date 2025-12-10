@@ -4,7 +4,6 @@ const assert = std.debug.assert;
 const builtin = @import("builtin");
 
 const model = @import("../model.zig");
-const RawUsage = model.RawTokenUsage;
 const UsageAccumulator = model.UsageAccumulator;
 const usageFieldForKey = model.usageFieldForKey;
 const parseTokenNumber = model.parseTokenNumber;

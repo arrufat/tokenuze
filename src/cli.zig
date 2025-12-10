@@ -1,7 +1,8 @@
 const std = @import("std");
-const builtin = @import("builtin");
-const tokenuze = @import("tokenuze");
 const testing = std.testing;
+const builtin = @import("builtin");
+
+const tokenuze = @import("tokenuze");
 
 pub const CliError = error{
     InvalidUsage,

@@ -1,9 +1,9 @@
 const std = @import("std");
-const model = @import("../model.zig");
-const provider = @import("provider.zig");
-
 const ascii = std.ascii;
+
+const model = @import("../model.zig");
 const RawUsage = model.RawTokenUsage;
+const provider = @import("provider.zig");
 const MessageDeduper = provider.MessageDeduper;
 
 const ProviderExports = provider.makeProvider(.{

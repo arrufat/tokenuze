@@ -1,10 +1,11 @@
 const std = @import("std");
-const model = @import("../model.zig");
-const provider = @import("provider.zig");
 
+const model = @import("../model.zig");
 const RawUsage = model.RawTokenUsage;
+const provider = @import("provider.zig");
 const TokenSlice = provider.JsonTokenSlice;
 const ModelState = provider.ModelState;
+
 const token_count_type = "token_count";
 
 const fallback_pricing = [_]provider.FallbackPricingEntry{
