@@ -1209,6 +1209,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             };
 
             const timezone_offset = @as(i32, filters.timezone_offset_minutes);
+
+            var threaded = std.Io.Threaded.init(shared_allocator);
+            defer threaded.deinit();
+            const io = threaded.io();
+
+            var group = std.Io.Group.init;
+
             const worker_count = blk: {
                 const cpu_count = std.Thread.getCpuCount() catch 1;
                 const clamped = @max(1, cpu_count);
@@ -1223,24 +1230,26 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 timezone_offset: i32,
             };
 
-            const Worker = struct {
-                fn run(args: WorkerArgs) void {
-                    var worker_arena_state = std.heap.ArenaAllocator.init(args.shared.temp_allocator);
+            const TaskFn = struct {
+                fn run(args: *const WorkerArgs) void {
+                    const shared_ctx = args.shared;
+
+                    var worker_arena_state = std.heap.ArenaAllocator.init(shared_ctx.temp_allocator);
                     defer worker_arena_state.deinit();
                     const worker_allocator = worker_arena_state.allocator();
 
                     const sink = EventSink{
-                        .context = args.shared,
+                        .context = shared_ctx,
                         .emitFn = struct {
                             fn emit(ctx_ptr: *anyopaque, event: model.TokenUsageEvent) anyerror!void {
-                                const ctx: *SharedContext = @ptrCast(@alignCast(ctx_ptr));
-                                if (ctx.consumer.mutex) |mutex| mutex.lock();
-                                defer if (ctx.consumer.mutex) |mutex| mutex.unlock();
-                                try ctx.consumer.ingest(
-                                    ctx.consumer.context,
-                                    ctx.shared_allocator,
+                                const local_ctx: *SharedContext = @ptrCast(@alignCast(ctx_ptr));
+                                if (local_ctx.consumer.mutex) |mutex| mutex.lock();
+                                defer if (local_ctx.consumer.mutex) |mutex| mutex.unlock();
+                                try local_ctx.consumer.ingest(
+                                    local_ctx.consumer.context,
+                                    local_ctx.shared_allocator,
                                     &event,
-                                    ctx.filters,
+                                    local_ctx.filters,
                                 );
                             }
                         }.emit,
@@ -1248,53 +1257,43 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
                     while (true) {
                         const idx = args.work_index.fetchAdd(1, .acq_rel);
-                        if (idx >= args.shared.paths.len) break;
+                        if (idx >= shared_ctx.paths.len) break;
 
                         _ = worker_arena_state.reset(.retain_capacity);
-                        processPath(args.shared, worker_allocator, sink, args.timezone_offset, idx);
+                        
+                        const relative = shared_ctx.paths[idx];
+                        const absolute_path = std.fs.path.join(worker_allocator, &.{ shared_ctx.sessions_dir, relative }) catch |err| {
+                            std.log.warn("{s}.collectEvents: unable to build path for '{s}' ({s})", .{
+                                provider_name,
+                                relative,
+                                @errorName(err),
+                            });
+                            continue;
+                        };
 
-                        const finished = args.shared.completed.fetchAdd(1, .acq_rel) + 1;
-                        if (args.shared.progress) |node| node.setCompletedItems(finished);
+                        if (relative.len <= json_ext.len or !std.mem.endsWith(u8, relative, json_ext)) continue;
+                        const session_id_slice = relative[0 .. relative.len - json_ext.len];
+
+                        const maybe_session_id = duplicateNonEmpty(worker_allocator, session_id_slice) catch {
+                            continue;
+                        };
+                        const session_id = maybe_session_id orelse continue;
+
+                        parseSessionFile(
+                            worker_allocator,
+                            session_id,
+                            absolute_path,
+                            shared_ctx.deduper,
+                            args.timezone_offset,
+                            sink,
+                        ) catch |err| {
+                            logSessionWarning(absolute_path, "failed to parse session file", err);
+                            continue;
+                        };
+
+                        const finished = shared_ctx.completed.fetchAdd(1, .acq_rel) + 1;
+                        if (shared_ctx.progress) |node| node.setCompletedItems(finished);
                     }
-                }
-
-                fn processPath(
-                    shared_ctx: *SharedContext,
-                    worker_allocator: std.mem.Allocator,
-                    sink: EventSink,
-                    tz_offset: i32,
-                    idx: usize,
-                ) void {
-                    const relative = shared_ctx.paths[idx];
-                    const absolute_path = std.fs.path.join(worker_allocator, &.{ shared_ctx.sessions_dir, relative }) catch |err| {
-                        std.log.warn("{s}.collectEvents: unable to build path for '{s}' ({s})", .{
-                            provider_name,
-                            relative,
-                            @errorName(err),
-                        });
-                        return;
-                    };
-                    defer worker_allocator.free(absolute_path);
-
-                    if (relative.len <= json_ext.len or !std.mem.endsWith(u8, relative, json_ext)) return;
-                    const session_id_slice = relative[0 .. relative.len - json_ext.len];
-
-                    const maybe_session_id = duplicateNonEmpty(worker_allocator, session_id_slice) catch {
-                        return;
-                    };
-                    const session_id = maybe_session_id orelse return;
-
-                    parseSessionFile(
-                        worker_allocator,
-                        session_id,
-                        absolute_path,
-                        shared_ctx.deduper,
-                        tz_offset,
-                        sink,
-                    ) catch |err| {
-                        logSessionWarning(absolute_path, "failed to parse session file", err);
-                        return;
-                    };
                 }
             };
 
@@ -1304,17 +1303,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .timezone_offset = timezone_offset,
             };
 
-            if (worker_count == 1) {
-                Worker.run(worker_args);
-            } else {
-                const threads = try shared_allocator.alloc(std.Thread, worker_count);
-                defer shared_allocator.free(threads);
-
-                for (threads) |*thread| {
-                    thread.* = try std.Thread.spawn(.{}, Worker.run, .{worker_args});
-                }
-                for (threads) |thread| thread.join();
+            for (0..worker_count) |_| {
+                group.async(io, TaskFn.run, .{&worker_args});
             }
+
+            group.wait(io);
 
             const final_completed = completed.load(.acquire);
 
