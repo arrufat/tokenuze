@@ -1260,7 +1260,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                         if (idx >= shared_ctx.paths.len) break;
 
                         _ = worker_arena_state.reset(.retain_capacity);
-                        
+
                         const relative = shared_ctx.paths[idx];
                         const absolute_path = std.fs.path.join(worker_allocator, &.{ shared_ctx.sessions_dir, relative }) catch |err| {
                             std.log.warn("{s}.collectEvents: unable to build path for '{s}' ({s})", .{
