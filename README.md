@@ -30,14 +30,34 @@ zig build --release=fast  # binary will be in zig-out/bin/
 ```
 
 ## Quick Start
+
+By default it will display daily usage across all providers since the beginning of time:
 ```bash
-tokenuze --upload  # upload usage across all supported models
-tokenuze --upload --agent gemini --agent opencode  # request specific agents
-tokenuze --since 20250101 --until 20250107  # filter a specific date range
-tokenuze --sessions --since 20250101  # print per-session table (default)
-tokenuze --sessions --since 20250101 --json --pretty  # print per-session JSON
-tokenuze --help  # display all usage options
+tokenuze
 ```
+
+### Options
+
+You can restrict what `tokenuze` displays by filtering by date
+```bash
+tokenuze --since 20250101 --until 20250107
+```
+Or requesting specific providers
+```bash
+tokenuze --agent claude --agent codex
+```
+And combine everything
+```
+tokenuze --agent claude --agent codex --since 20250101 --until 20250107
+```
+
+By appending the `--sessions` flag you can display session usage instead of daily.
+
+Using the `--json` flag will display the result as a JSON file, which can be pretty printed with `--pretty`.
+
+If you are tracking the stats in a separate server you can apped the `--upload` flag to send them there.
+
+Finally, you can see all this information typing `tokenuze --help`.
 
 ### JSON Output Sample
 
