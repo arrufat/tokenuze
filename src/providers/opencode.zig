@@ -211,6 +211,10 @@ fn parseSessionFile(
     var session_label = session_id;
     var session_label_overridden = false;
 
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
     const resolved_id = determineSessionIdentifier(allocator, ctx, file_path) catch |err| {
         ctx.logWarning(file_path, "failed to read opencode session metadata", err);
         return;
@@ -254,7 +258,7 @@ fn parseSessionFile(
     }.lessThan);
 
     for (files.items) |message_path| {
-        parseMessageFile(allocator, ctx, session_label, message_path, timezone_offset_minutes, sink) catch |err| {
+        parseMessageFile(allocator, ctx, io, session_label, message_path, timezone_offset_minutes, sink) catch |err| {
             ctx.logWarning(message_path, "failed to parse opencode message", err);
         };
     }
@@ -325,16 +329,18 @@ fn buildMessageDirPath(
 fn parseMessageFile(
     allocator: std.mem.Allocator,
     ctx: *const provider.ParseContext,
+    io: std.Io,
     session_label: []const u8,
     file_path: []const u8,
     timezone_offset_minutes: i32,
     sink: provider.EventSink,
 ) !void {
-    const data = try std.fs.cwd().readFileAlloc(file_path, allocator, std.Io.Limit.limited(512 * 1024));
-    defer allocator.free(data);
+    const file = try std.fs.openFileAbsolute(file_path, .{});
+    defer file.close();
 
-    var slice_reader = std.Io.Reader.fixed(data);
-    var json_reader = std.json.Reader.init(allocator, &slice_reader);
+    var reader_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.readerStreaming(io, reader_buffer[0..]);
+    var json_reader = std.json.Reader.init(allocator, &file_reader.interface);
     defer json_reader.deinit();
 
     if ((try json_reader.next()) != .object_begin) return;
@@ -386,6 +392,7 @@ fn parseMessageFileTestWrapper(
         .legacy_fallback_model = null,
         .cached_counts_overlap_input = false,
     };
+
     const absolute_path = try std.fs.cwd().realpathAlloc(allocator, session_path);
     defer allocator.free(absolute_path);
     try parseSessionFile(
@@ -433,4 +440,52 @@ test "opencode parser emits assistant usage events" {
     try std.testing.expectEqual(@as(u64, 400), second.usage.input_tokens);
     try std.testing.expectEqual(@as(u64, 0), second.usage.cached_input_tokens);
     try std.testing.expectEqual(@as(u64, 80), second.usage.output_tokens);
+}
+
+test "opencode message parser handles large documents" {
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const worker_allocator = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const large_len: usize = 700 * 1024;
+    const large_payload = try worker_allocator.alloc(u8, large_len);
+    @memset(large_payload, 'a');
+
+    var msg_file = try tmp.dir.createFile("msg_large.json", .{});
+    defer msg_file.close();
+
+    try msg_file.writeAll("{\"role\":\"assistant\",\"time\":{\"completed\":1700000000000},\"tokens\":{\"input\":1,\"output\":2},\"modelID\":\"big-model\",\"content\":\"");
+    try msg_file.writeAll(large_payload);
+    try msg_file.writeAll("\"}");
+
+    const msg_path = try tmp.dir.realpathAlloc(worker_allocator, "msg_large.json");
+    defer worker_allocator.free(msg_path);
+
+    var events: std.ArrayList(model.TokenUsageEvent) = .empty;
+    defer events.deinit(worker_allocator);
+    var sink_adapter = provider.EventListCollector.init(&events, worker_allocator);
+    const sink = sink_adapter.asSink();
+
+    const ctx = provider.ParseContext{
+        .provider_name = "opencode-test",
+        .legacy_fallback_model = null,
+        .cached_counts_overlap_input = false,
+    };
+
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
+    try parseMessageFile(worker_allocator, &ctx, io, "fixture-session", msg_path, 0, sink);
+
+    try std.testing.expectEqual(@as(usize, 1), events.items.len);
+    const event = events.items[0];
+    try std.testing.expectEqualStrings("fixture-session", event.session_id);
+    try std.testing.expectEqualStrings("big-model", event.model);
+    try std.testing.expectEqual(@as(u64, 1), event.usage.input_tokens);
+    try std.testing.expectEqual(@as(u64, 2), event.usage.output_tokens);
 }
