@@ -111,9 +111,9 @@ fn parseSessionFile(
                 entry.usage.reasoning_output_tokens = usage_json.reasoningOutputTokens orelse 0;
 
                 const total_input = usage_json.totalInputTokens orelse
-                    (entry.usage.input_tokens + entry.usage.cache_creation_input_tokens + entry.usage.cached_input_tokens);
+                    (entry.usage.input_tokens +| entry.usage.cache_creation_input_tokens +| entry.usage.cached_input_tokens);
                 entry.usage.total_tokens = usage_json.totalTokens orelse
-                    (total_input + entry.usage.output_tokens + entry.usage.reasoning_output_tokens);
+                    (total_input +| entry.usage.output_tokens +| entry.usage.reasoning_output_tokens);
 
                 try usage_by_message.put(message_id, entry);
             }
