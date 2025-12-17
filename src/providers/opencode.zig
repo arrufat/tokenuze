@@ -284,27 +284,37 @@ fn readSessionIdentifier(
     file_path: []const u8,
 ) !?[]u8 {
     var identifier: ?[]u8 = null;
-    try provider.withJsonObjectReader(allocator, ctx, runtime, file_path, .{ .max_bytes = 1024 * 64 }, &identifier, struct {
-        fn handle(id_ptr: *?[]u8, scratch: std.mem.Allocator, reader: *std.json.Reader) !void {
-            try provider.jsonWalkObject(scratch, reader, id_ptr, struct {
-                fn field(ptr: *?[]u8, alloc: std.mem.Allocator, r: *std.json.Reader, key: []const u8) !void {
-                    if (!std.mem.eql(u8, key, "id")) {
-                        try r.skipValue();
-                        return;
-                    }
-                    if (ptr.* != null) {
-                        try r.skipValue();
-                        return;
-                    }
-                    var token = try provider.jsonReadStringToken(alloc, r);
-                    defer token.deinit(alloc);
-                    const trimmed = std.mem.trim(u8, token.view(), " \r\n\t");
-                    if (trimmed.len == 0) return;
-                    ptr.* = try alloc.dupe(u8, trimmed);
-                }
-            }.field);
+    const HandleContext = struct {
+        fn root(id_ptr: *?[]u8, scratch: std.mem.Allocator, reader: *std.json.Reader) !void {
+            try provider.jsonWalkObject(scratch, reader, id_ptr, field);
         }
-    }.handle);
+
+        fn field(ptr: *?[]u8, alloc: std.mem.Allocator, r: *std.json.Reader, key: []const u8) !void {
+            if (!std.mem.eql(u8, key, "id")) {
+                try r.skipValue();
+                return;
+            }
+            if (ptr.* != null) {
+                try r.skipValue();
+                return;
+            }
+            var token = try provider.jsonReadStringToken(alloc, r);
+            defer token.deinit(alloc);
+            const trimmed = std.mem.trim(u8, token.view(), " \r\n\t");
+            if (trimmed.len == 0) return;
+            ptr.* = try alloc.dupe(u8, trimmed);
+        }
+    };
+
+    try provider.withJsonObjectReader(
+        allocator,
+        ctx,
+        runtime,
+        file_path,
+        .{ .max_bytes = 1024 * 64 },
+        &identifier,
+        HandleContext.root,
+    );
     return identifier;
 }
 
