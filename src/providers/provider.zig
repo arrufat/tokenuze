@@ -309,9 +309,14 @@ pub fn streamJsonLines(
         return;
     }
 
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
+    var io_single: std.Io.Threaded = undefined;
+    var io_single_inited = false;
+    const io = if (ctx.io) |provided| provided else blk: {
+        io_single = std.Io.Threaded.init_single_threaded;
+        io_single_inited = true;
+        break :blk io_single.io();
+    };
+    defer if (io_single_inited) io_single.deinit();
 
     var reader_buffer: [64 * 1024]u8 = undefined;
     var file_reader = file.readerStreaming(io, reader_buffer[0..]);
