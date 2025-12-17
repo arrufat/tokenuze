@@ -43,27 +43,17 @@ fn parseSessionFile(
     sink: provider.EventSink,
 ) !void {
     _ = deduper;
-    const Handler = struct {
-        ctx: *const provider.ParseContext,
-        session_id: []const u8,
-        timezone_offset_minutes: i32,
-        sink: provider.EventSink,
-
-        fn handle(self: *@This(), scratch: std.mem.Allocator, reader: *std.json.Reader) !void {
-            var parsed = try std.json.parseFromTokenSource(std.json.Value, scratch, reader, .{});
-            defer parsed.deinit();
-            try parseThreadValue(scratch, self.ctx, self.session_id, parsed.value, self.timezone_offset_minutes, self.sink);
-        }
-    };
-
-    var handler = Handler{
+    var state = ParseState{
+        .allocator = allocator,
         .ctx = ctx,
         .session_id = session_id,
         .timezone_offset_minutes = timezone_offset_minutes,
         .sink = sink,
+        .usage_by_message = std.AutoHashMap(u64, UsageEntry).init(allocator),
     };
+    defer state.usage_by_message.deinit();
 
-    try provider.withJsonDocumentReader(
+    try provider.withJsonObjectReader(
         allocator,
         ctx,
         runtime,
@@ -73,172 +63,208 @@ fn parseSessionFile(
             .open_error_message = "unable to open amp session file",
             .stat_error_message = "unable to stat amp session file",
         },
-        &handler,
-        Handler.handle,
+        &state,
+        ParseState.parseRootObject,
     );
 }
 
-fn parseThreadValue(
+const ParseState = struct {
     allocator: std.mem.Allocator,
     ctx: *const provider.ParseContext,
     session_id: []const u8,
-    root_value: std.json.Value,
     timezone_offset_minutes: i32,
     sink: provider.EventSink,
-) !void {
-    const root = switch (root_value) {
-        .object => |o| o,
-        else => return,
-    };
+    usage_by_message: std.AutoHashMap(u64, UsageEntry),
 
-    const messages_val = root.get("messages") orelse return;
-    const ledger_val = root.get("usageLedger") orelse return;
-
-    const messages = switch (messages_val) {
-        .array => |arr| arr,
-        else => return,
-    };
-
-    const ledger_obj = switch (ledger_val) {
-        .object => |o| o,
-        else => return,
-    };
-
-    const events_val = ledger_obj.get("events") orelse return;
-    const events = switch (events_val) {
-        .array => |arr| arr,
-        else => return,
-    };
-
-    var usage_by_message = std.AutoHashMap(u64, UsageEntry).init(allocator);
-    defer usage_by_message.deinit();
-
-    for (messages.items) |msg_val| {
-        const msg_obj = switch (msg_val) {
-            .object => |o| o,
-            else => continue,
-        };
-
-        const message_id_val = msg_obj.get("messageId") orelse continue;
-        const message_id = switch (message_id_val) {
-            .integer => |i| @as(u64, @intCast(i)),
-            .float => |f| @as(u64, @intFromFloat(f)),
-            else => continue,
-        };
-
-        const usage_val = msg_obj.get("usage") orelse continue;
-        const usage_obj = switch (usage_val) {
-            .object => |o| o,
-            else => continue,
-        };
-
-        var entry = UsageEntry{};
-        if (usage_obj.get("model")) |model_val| {
-            if (model_val == .string) entry.model = model_val.string;
-        }
-
-        var total_input_override: ?u64 = null;
-        var total_tokens_override: ?u64 = null;
-
-        entry.usage.input_tokens = if (usage_obj.get("inputTokens")) |val| parseU64(val) else 0;
-        entry.usage.cache_creation_input_tokens = if (usage_obj.get("cacheCreationInputTokens")) |val| parseU64(val) else 0;
-        entry.usage.cached_input_tokens = if (usage_obj.get("cacheReadInputTokens")) |val| parseU64(val) else 0;
-        entry.usage.output_tokens = if (usage_obj.get("outputTokens")) |val| parseU64(val) else 0;
-        entry.usage.reasoning_output_tokens = if (usage_obj.get("reasoningOutputTokens")) |val| parseU64(val) else 0;
-        total_input_override = if (usage_obj.get("totalInputTokens")) |val| parseU64(val) else null;
-        total_tokens_override = if (usage_obj.get("totalTokens")) |val| parseU64(val) else null;
-
-        const total_input = total_input_override orelse
-            (entry.usage.input_tokens + entry.usage.cache_creation_input_tokens + entry.usage.cached_input_tokens);
-        entry.usage.total_tokens = total_tokens_override orelse
-            (total_input + entry.usage.output_tokens + entry.usage.reasoning_output_tokens);
-
-        try usage_by_message.put(message_id, entry);
+    fn parseRootObject(self: *ParseState, scratch: std.mem.Allocator, reader: *std.json.Reader) !void {
+        try provider.jsonWalkObject(scratch, reader, self, handleRootField);
     }
 
-    for (events.items) |event_val| {
-        const event_obj = switch (event_val) {
-            .object => |o| o,
-            else => continue,
-        };
-
-        const target_id = blk: {
-            if (event_obj.get("toMessageId")) |v| {
-                break :blk parseU64(v);
-            }
-            if (event_obj.get("fromMessageId")) |v| {
-                break :blk parseU64(v);
-            }
-            continue;
-        };
-
-        const ts_val = event_obj.get("timestamp") orelse continue;
-        const ts_slice = switch (ts_val) {
-            .string => ts_val.string,
-            else => continue,
-        };
-        var timestamp_info = (try provider.timestampFromSlice(allocator, ts_slice, timezone_offset_minutes)) orelse continue;
-        var timestamp_moved = false;
-        defer if (!timestamp_moved and timestamp_info.text.len > 0) allocator.free(timestamp_info.text);
-
-        var ledger_tokens = LedgerTokens{};
-        if (event_obj.get("tokens")) |tokens_val| {
-            switch (tokens_val) {
-                .object => |tok_obj| {
-                    ledger_tokens.input = if (tok_obj.get("input")) |v| parseU64(v) else 0;
-                    ledger_tokens.output = if (tok_obj.get("output")) |v| parseU64(v) else 0;
-                },
-                else => {},
-            }
+    fn handleRootField(self: *ParseState, scratch: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
+        if (std.mem.eql(u8, key, "messages")) {
+            try provider.jsonWalkArrayObjects(scratch, reader, self, handleMessageObject);
+            return;
         }
+        if (std.mem.eql(u8, key, "usageLedger")) {
+            try provider.jsonWalkOptionalObject(scratch, reader, self, handleLedgerField);
+            return;
+        }
+        try reader.skipValue();
+    }
 
-        const ledger_model: ?[]const u8 = blk: {
-            if (event_obj.get("model")) |v| switch (v) {
-                .string => break :blk v.string,
-                else => {},
-            };
-            break :blk null;
-        };
+    fn handleMessageObject(self: *ParseState, scratch: std.mem.Allocator, reader: *std.json.Reader, _: usize) !void {
+        var rec = MessageRecord{};
+        try provider.jsonWalkObject(scratch, reader, &rec, MessageRecord.handleField);
+        const message_id = rec.message_id orelse return;
+        if (!provider.shouldEmitUsage(rec.entry.usage)) return;
+        try self.usage_by_message.put(message_id, rec.entry);
+    }
+
+    fn handleLedgerField(self: *ParseState, scratch: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
+        if (!std.mem.eql(u8, key, "events")) {
+            try reader.skipValue();
+            return;
+        }
+        try provider.jsonWalkArrayObjects(scratch, reader, self, handleLedgerEventObject);
+    }
+
+    fn handleLedgerEventObject(self: *ParseState, scratch: std.mem.Allocator, reader: *std.json.Reader, _: usize) !void {
+        var rec = LedgerEventRecord{ .timezone_offset_minutes = self.timezone_offset_minutes };
+        try provider.jsonWalkObject(scratch, reader, &rec, LedgerEventRecord.handleField);
+
+        const target_id = rec.to_message_id orelse rec.from_message_id orelse return;
+        var timestamp_info = rec.timestamp_info orelse return;
+        var timestamp_moved = false;
+        defer if (!timestamp_moved and timestamp_info.text.len > 0) scratch.free(timestamp_info.text);
 
         var usage = model.TokenUsage{
-            .input_tokens = ledger_tokens.input,
-            .output_tokens = ledger_tokens.output,
-            .total_tokens = ledger_tokens.input + ledger_tokens.output,
+            .input_tokens = rec.tokens.input,
+            .output_tokens = rec.tokens.output,
+            .total_tokens = rec.tokens.input + rec.tokens.output,
         };
-        var raw_model: ?[]const u8 = ledger_model;
 
-        if (usage_by_message.get(target_id)) |msg_usage| {
+        var raw_model: ?[]const u8 = rec.model;
+        if (self.usage_by_message.get(target_id)) |msg_usage| {
             usage = msg_usage.usage;
             if (msg_usage.model) |m| raw_model = m;
         }
-
-        if (raw_model == null) continue;
+        const model_slice = raw_model orelse return;
 
         var timestamp_slot: ?provider.TimestampInfo = timestamp_info;
         var model_state = provider.ModelState{};
         provider.emitUsageEventWithTimestamp(
-            ctx,
-            allocator,
+            self.ctx,
+            scratch,
             &model_state,
-            sink,
-            session_id,
+            self.sink,
+            self.session_id,
             &timestamp_slot,
             usage,
-            raw_model.?,
-        ) catch continue;
+            model_slice,
+        ) catch return;
 
         timestamp_slot = null;
         timestamp_moved = true;
     }
-}
+};
 
-fn parseU64(val: std.json.Value) u64 {
-    return switch (val) {
-        .integer => |i| @as(u64, @intCast(i)),
-        .float => |f| @as(u64, @intFromFloat(f)),
-        else => 0,
-    };
-}
+const MessageRecord = struct {
+    message_id: ?u64 = null,
+    entry: UsageEntry = .{},
+    total_input_override: ?u64 = null,
+    total_tokens_override: ?u64 = null,
+
+    fn handleField(self: *MessageRecord, allocator: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
+        if (std.mem.eql(u8, key, "messageId")) {
+            self.message_id = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "usage")) {
+            try provider.jsonWalkOptionalObject(allocator, reader, self, handleUsageField);
+            self.finalize();
+            return;
+        }
+        try reader.skipValue();
+    }
+
+    fn handleUsageField(self: *MessageRecord, allocator: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
+        if (std.mem.eql(u8, key, "model")) {
+            var token = try provider.jsonReadStringToken(allocator, reader);
+            defer token.deinit(allocator);
+            const trimmed = std.mem.trim(u8, token.view(), " \r\n\t");
+            if (trimmed.len == 0) return;
+            self.entry.model = try allocator.dupe(u8, trimmed);
+            return;
+        }
+        if (std.mem.eql(u8, key, "inputTokens")) {
+            self.entry.usage.input_tokens = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "cacheCreationInputTokens")) {
+            self.entry.usage.cache_creation_input_tokens = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "cacheReadInputTokens")) {
+            self.entry.usage.cached_input_tokens = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "outputTokens")) {
+            self.entry.usage.output_tokens = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "reasoningOutputTokens")) {
+            self.entry.usage.reasoning_output_tokens = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "totalInputTokens")) {
+            self.total_input_override = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "totalTokens")) {
+            self.total_tokens_override = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        try reader.skipValue();
+    }
+
+    fn finalize(self: *MessageRecord) void {
+        const total_input = self.total_input_override orelse
+            (self.entry.usage.input_tokens + self.entry.usage.cache_creation_input_tokens + self.entry.usage.cached_input_tokens);
+        self.entry.usage.total_tokens = self.total_tokens_override orelse
+            (total_input + self.entry.usage.output_tokens + self.entry.usage.reasoning_output_tokens);
+    }
+};
+
+const LedgerEventRecord = struct {
+    timezone_offset_minutes: i32,
+    to_message_id: ?u64 = null,
+    from_message_id: ?u64 = null,
+    timestamp_info: ?provider.TimestampInfo = null,
+    tokens: LedgerTokens = .{},
+    model: ?[]const u8 = null,
+
+    fn handleField(self: *LedgerEventRecord, allocator: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
+        if (std.mem.eql(u8, key, "toMessageId")) {
+            self.to_message_id = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "fromMessageId")) {
+            self.from_message_id = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "timestamp")) {
+            var token = try provider.jsonReadStringToken(allocator, reader);
+            defer token.deinit(allocator);
+            self.timestamp_info = (try provider.timestampFromSlice(allocator, token.view(), self.timezone_offset_minutes)) orelse return;
+            return;
+        }
+        if (std.mem.eql(u8, key, "tokens")) {
+            try provider.jsonWalkOptionalObject(allocator, reader, self, handleTokensField);
+            return;
+        }
+        if (std.mem.eql(u8, key, "model")) {
+            var token = try provider.jsonReadStringToken(allocator, reader);
+            defer token.deinit(allocator);
+            const trimmed = std.mem.trim(u8, token.view(), " \r\n\t");
+            if (trimmed.len == 0) return;
+            self.model = try allocator.dupe(u8, trimmed);
+            return;
+        }
+        try reader.skipValue();
+    }
+
+    fn handleTokensField(self: *LedgerEventRecord, allocator: std.mem.Allocator, reader: *std.json.Reader, key: []const u8) !void {
+        if (std.mem.eql(u8, key, "input")) {
+            self.tokens.input = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        if (std.mem.eql(u8, key, "output")) {
+            self.tokens.output = try provider.jsonParseU64Value(allocator, reader);
+            return;
+        }
+        try reader.skipValue();
+    }
+};
 
 test "amp parser emits usage events from ledger + message usage" {
     const allocator = testing.allocator;
