@@ -5,22 +5,6 @@ const RawUsage = model.RawTokenUsage;
 const provider = @import("provider.zig");
 const ModelState = provider.ModelState;
 
-const GEMINI_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
-    .{ .key = "input", .field = .input_tokens },
-    .{ .key = "cached", .field = .cached_input_tokens },
-    .{ .key = "output", .field = .output_tokens },
-    .{ .key = "tool", .field = .output_tokens, .mode = .add },
-    .{ .key = "thoughts", .field = .reasoning_output_tokens },
-};
-
-fn recomputeTotal(usage: *RawUsage) void {
-    var total = usage.input_tokens +| usage.cache_creation_input_tokens;
-    total = total +| usage.cached_input_tokens;
-    total = total +| usage.output_tokens;
-    total = total +| usage.reasoning_output_tokens;
-    usage.total_tokens = total;
-}
-
 const fallback_pricing = [_]provider.FallbackPricingEntry{
     .{ .name = "gemini-2.5-pro", .pricing = .{
         .input_cost_per_m = 1.25,
@@ -62,35 +46,6 @@ pub const collect = ProviderExports.collect;
 pub const loadPricingData = ProviderExports.loadPricingData;
 pub const sessionsPath = ProviderExports.sessionsPath;
 
-const ParseState = struct {
-    allocator: std.mem.Allocator,
-    ctx: *const provider.ParseContext,
-    file_path: []const u8,
-    session_label: *[]const u8,
-    session_label_overridden: *bool,
-    timezone_offset_minutes: i32,
-    sink: provider.EventSink,
-    previous_totals: *?RawUsage,
-    model_state: *ModelState,
-};
-
-const MessageContext = struct {
-    state: *ParseState,
-    timestamp: ?provider.TimestampInfo = null,
-    usage: ?RawUsage = null,
-
-    fn deinit(self: *MessageContext) void {
-        self.clearTimestamp();
-    }
-
-    fn clearTimestamp(self: *MessageContext) void {
-        if (self.timestamp) |info| {
-            self.state.allocator.free(info.text);
-            self.timestamp = null;
-        }
-    }
-};
-
 fn parseSessionFile(
     allocator: std.mem.Allocator,
     ctx: *const provider.ParseContext,
@@ -102,15 +57,116 @@ fn parseSessionFile(
     sink: provider.EventSink,
 ) !void {
     _ = deduper;
+
+    const Tokens = struct {
+        input: ?u64 = null,
+        cached: ?u64 = null,
+        output: ?u64 = null,
+        tool: ?u64 = null,
+        thoughts: ?u64 = null,
+        total: ?u64 = null,
+    };
+
+    const Message = struct {
+        id: ?[]const u8 = null,
+        timestamp: ?[]const u8 = null,
+        model: ?[]const u8 = null,
+        tokens: ?Tokens = null,
+    };
+
+    const SessionDoc = struct {
+        sessionId: ?[]const u8 = null,
+        messages: []Message = &.{},
+    };
+
     var session_label = session_id;
     var session_label_overridden = false;
     var previous_totals: ?RawUsage = null;
     var model_state = ModelState{};
 
-    var handler = LineHandler{
-        .ctx = ctx,
+    const Handler = struct {
+        allocator: std.mem.Allocator,
+        ctx: *const provider.ParseContext,
+        session_label: *[]const u8,
+        session_label_overridden: *bool,
+        timezone_offset_minutes: i32,
+        sink: provider.EventSink,
+        previous_totals: *?RawUsage,
+        model_state: *ModelState,
+
+        fn run(self: *@This(), scratch: std.mem.Allocator, reader: *std.json.Reader) !void {
+            var parsed = try std.json.parseFromTokenSource(SessionDoc, scratch, reader, .{
+                .ignore_unknown_fields = true,
+            });
+            defer parsed.deinit();
+
+            if (parsed.value.sessionId) |sid| {
+                provider.overrideSessionLabelFromSlice(
+                    self.allocator,
+                    self.session_label,
+                    self.session_label_overridden,
+                    sid,
+                );
+            }
+
+            for (parsed.value.messages) |msg| {
+                const ts = msg.timestamp orelse continue;
+                const raw_model = msg.model orelse continue;
+                const tok = msg.tokens orelse continue;
+
+                var usage_raw = RawUsage{
+                    .input_tokens = tok.input orelse 0,
+                    .cache_creation_input_tokens = 0,
+                    .cached_input_tokens = tok.cached orelse 0,
+                    .output_tokens = (tok.output orelse 0) + (tok.tool orelse 0),
+                    .reasoning_output_tokens = tok.thoughts orelse 0,
+                    .total_tokens = tok.total orelse 0,
+                };
+                if (usage_raw.total_tokens == 0) {
+                    usage_raw.total_tokens =
+                        usage_raw.input_tokens +
+                        usage_raw.cache_creation_input_tokens +
+                        usage_raw.cached_input_tokens +
+                        usage_raw.output_tokens +
+                        usage_raw.reasoning_output_tokens;
+                }
+
+                const timestamp_info = (try provider.timestampFromSlice(
+                    self.allocator,
+                    ts,
+                    self.timezone_offset_minutes,
+                )) orelse continue;
+
+                if (self.previous_totals.*) |prev| {
+                    if (std.meta.eql(prev, usage_raw)) {
+                        self.allocator.free(timestamp_info.text);
+                        continue;
+                    }
+                }
+
+                var delta = model.TokenUsage.deltaFrom(usage_raw, self.previous_totals.*);
+                self.ctx.normalizeUsageDelta(&delta);
+                self.previous_totals.* = usage_raw;
+
+                var slot: ?provider.TimestampInfo = timestamp_info;
+                defer if (slot) |info| self.allocator.free(info.text);
+                try provider.emitUsageEventWithTimestamp(
+                    self.ctx,
+                    self.allocator,
+                    self.model_state,
+                    self.sink,
+                    self.session_label.*,
+                    &slot,
+                    delta,
+                    raw_model,
+                );
+            }
+        }
+    };
+
+    var handler = Handler{
         .allocator = allocator,
-        .file_path = file_path,
+        .ctx = ctx,
         .session_label = &session_label,
         .session_label_overridden = &session_label_overridden,
         .timezone_offset_minutes = timezone_offset_minutes,
@@ -119,7 +175,7 @@ fn parseSessionFile(
         .model_state = &model_state,
     };
 
-    try provider.withJsonObjectReader(
+    try provider.withJsonDocumentReader(
         allocator,
         ctx,
         runtime,
@@ -130,148 +186,7 @@ fn parseSessionFile(
             .stat_error_message = "error while statting gemini session file",
         },
         &handler,
-        LineHandler.parseDocument,
-    );
-}
-
-const LineHandler = struct {
-    ctx: *const provider.ParseContext,
-    allocator: std.mem.Allocator,
-    file_path: []const u8,
-    session_label: *[]const u8,
-    session_label_overridden: *bool,
-    timezone_offset_minutes: i32,
-    sink: provider.EventSink,
-    previous_totals: *?RawUsage,
-    model_state: *ModelState,
-
-    fn handle(self: *LineHandler, line: []const u8, line_index: usize) !void {
-        provider.parseJsonLine(self.allocator, line, self, parseDocument) catch |err| {
-            std.log.warn(
-                "{s}: failed to parse gemini session file '{s}' line {d} ({s})",
-                .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
-            );
-        };
-    }
-
-    fn parseDocument(self: *LineHandler, allocator: std.mem.Allocator, reader: *std.json.Reader) !void {
-        var state = ParseState{
-            .allocator = allocator,
-            .ctx = self.ctx,
-            .file_path = self.file_path,
-            .session_label = self.session_label,
-            .session_label_overridden = self.session_label_overridden,
-            .timezone_offset_minutes = self.timezone_offset_minutes,
-            .sink = self.sink,
-            .previous_totals = self.previous_totals,
-            .model_state = self.model_state,
-        };
-
-        try provider.jsonWalkObject(allocator, reader, &state, parseRootField);
-    }
-};
-
-fn parseRootField(
-    state: *ParseState,
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    key: []const u8,
-) !void {
-    if (std.mem.eql(u8, key, "sessionId")) {
-        try provider.overrideSessionLabelFromReader(
-            allocator,
-            reader,
-            state.session_label,
-            state.session_label_overridden,
-        );
-        return;
-    }
-
-    if (std.mem.eql(u8, key, "messages")) {
-        try parseMessagesArray(state, allocator, reader);
-        return;
-    }
-
-    try reader.skipValue();
-}
-
-fn parseMessagesArray(
-    state: *ParseState,
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-) !void {
-    try provider.jsonWalkArrayObjects(allocator, reader, state, parseMessageObject);
-}
-
-fn parseMessageObject(
-    state: *ParseState,
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    _: usize,
-) !void {
-    var context = MessageContext{ .state = state };
-    defer context.deinit();
-    try provider.jsonWalkObject(allocator, reader, &context, parseMessageField);
-    try emitMessage(&context);
-}
-
-fn parseMessageField(
-    context: *MessageContext,
-    allocator: std.mem.Allocator,
-    reader: *std.json.Reader,
-    key: []const u8,
-) !void {
-    if (std.mem.eql(u8, key, "timestamp")) {
-        try provider.updateTimestampFromReader(
-            context.state.allocator,
-            reader,
-            context.state.timezone_offset_minutes,
-            &context.timestamp,
-        );
-        return;
-    }
-    if (std.mem.eql(u8, key, "model")) {
-        var token = try provider.jsonReadStringToken(allocator, reader);
-        defer token.deinit(allocator);
-        _ = context.state.ctx.captureModel(context.state.allocator, context.state.model_state, token) catch |err| {
-            context.state.ctx.logWarning(context.state.file_path, "failed to capture model", err);
-            return;
-        };
-        return;
-    }
-    if (std.mem.eql(u8, key, "tokens")) {
-        context.usage = try provider.jsonParseUsageObjectWithDescriptors(allocator, reader, GEMINI_USAGE_FIELDS[0..]);
-        if (context.usage) |*usage| {
-            recomputeTotal(usage);
-        }
-        return;
-    }
-
-    try reader.skipValue();
-}
-
-fn emitMessage(context: *MessageContext) !void {
-    const usage_raw = context.usage orelse return;
-
-    if (context.state.previous_totals.*) |prev| {
-        if (std.meta.eql(prev, usage_raw)) {
-            return;
-        }
-    }
-
-    var delta = model.TokenUsage.deltaFrom(usage_raw, context.state.previous_totals.*);
-    context.state.ctx.normalizeUsageDelta(&delta);
-    context.state.previous_totals.* = usage_raw;
-
-    try provider.emitUsageEventWithTimestamp(
-        context.state.ctx,
-        context.state.allocator,
-        context.state.model_state,
-        context.state.sink,
-        context.state.session_label.*,
-        &context.timestamp,
-        delta,
-        null,
+        Handler.run,
     );
 }
 
