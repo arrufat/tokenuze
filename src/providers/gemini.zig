@@ -56,6 +56,8 @@ fn parseSessionFile(
     timezone_offset_minutes: i32,
     sink: provider.EventSink,
 ) !void {
+    if (std.mem.endsWith(u8, file_path, "logs.json")) return;
+
     _ = deduper;
 
     const Tokens = struct {
