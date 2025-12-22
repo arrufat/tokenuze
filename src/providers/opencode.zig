@@ -192,7 +192,7 @@ const MessageRecord = struct {
             .model = event_model,
             .usage = usage,
             .is_fallback = false,
-            .display_input_tokens = self.ctx.computeDisplayInput(usage),
+            .display_input_tokens = provider.ParseContext.computeDisplayInput(usage),
         };
         try self.sink.emit(event);
     }

@@ -361,7 +361,7 @@ fn parseUsageEntryValue(
         .model = model_slice,
         .usage = usage,
         .is_fallback = false,
-        .display_input_tokens = parse_ctx.computeDisplayInput(usage),
+        .display_input_tokens = provider.ParseContext.computeDisplayInput(usage),
     };
 
     if (consumer.mutex) |m| m.lock();

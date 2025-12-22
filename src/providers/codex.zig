@@ -203,7 +203,7 @@ const LineHandler = struct {
             .model = resolved.name,
             .usage = delta,
             .is_fallback = resolved.is_fallback,
-            .display_input_tokens = self.ctx.computeDisplayInput(delta),
+            .display_input_tokens = provider.ParseContext.computeDisplayInput(delta),
         };
         try self.sink.emit(event);
     }
