@@ -148,12 +148,9 @@ pub const UsageAccumulator = struct {
     }
 
     pub fn finalize(self: *UsageAccumulator) RawTokenUsage {
+        // First available field wins (matches ccusage first-available/nullish behavior)
         if (self.cached_direct) |direct| {
-            if (direct > 0) {
-                self.raw.cached_input_tokens = direct;
-            } else if (self.cached_fallback) |fallback| {
-                self.raw.cached_input_tokens = fallback;
-            }
+            self.raw.cached_input_tokens = direct;
         } else if (self.cached_fallback) |fallback| {
             self.raw.cached_input_tokens = fallback;
         }
@@ -292,6 +289,11 @@ const pricing_aliases = [_]struct { alias: []const u8, target: []const u8 }{
     .{ .alias = "claude sonnet 4.5", .target = "claude-sonnet-4-5-20250929" },
     .{ .alias = "claude sonnet 4.5 thinking", .target = "claude-sonnet-4-5-20250929" },
     .{ .alias = "claude haiku 4.5", .target = "claude-haiku-4-5-20251001" },
+
+    // OpenAI Codex explicit aliases
+    .{ .alias = "gpt-5-codex", .target = "gpt-5" },
+    .{ .alias = "gpt-5.1-codex", .target = "gpt-5.1" },
+    .{ .alias = "gpt-5.1-codex-mini", .target = "gpt-5.1-codex-mini" },
 
     // DeepSeek display names
     .{ .alias = "deepseek chat", .target = "deepseek-chat" },

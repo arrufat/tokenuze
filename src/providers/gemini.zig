@@ -183,7 +183,7 @@ fn parseSessionFile(
         runtime,
         file_path,
         .{
-            .max_bytes = 128 * 1024 * 1024,
+            .max_bytes = 1024 * 1024 * 1024,
             .open_error_message = "failed to open gemini session file",
             .stat_error_message = "error while statting gemini session file",
         },

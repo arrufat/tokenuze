@@ -97,7 +97,7 @@ fn parseSessionFile(
         runtime,
         file_path,
         .{
-            .max_bytes = 128 * 1024 * 1024,
+            .max_bytes = 1024 * 1024 * 1024,
             .open_error_message = "unable to open session file",
             .read_error_message = "error while reading session stream",
             .advance_error_message = "error while advancing session stream",

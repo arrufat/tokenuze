@@ -183,7 +183,7 @@ fn parseSessionFile(
         runtime,
         file_path,
         .{
-            .max_bytes = 64 * 1024 * 1024,
+            .max_bytes = 1024 * 1024 * 1024,
             .open_error_message = "unable to open amp session file",
             .stat_error_message = "unable to stat amp session file",
         },

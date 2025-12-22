@@ -115,7 +115,7 @@ fn parseClaudeSessionFile(
         runtime,
         file_path,
         .{
-            .max_bytes = 128 * 1024 * 1024,
+            .max_bytes = 1024 * 1024 * 1024,
             .open_error_message = "unable to open claude session file",
             .read_error_message = "error while reading claude session stream",
             .advance_error_message = "error while advancing claude session stream",
