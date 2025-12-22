@@ -486,9 +486,11 @@ fn tmToUnixSeconds(tm_value: c.tm) i64 {
 
 fn localtimeSafe(t_value: *c.time_t, out_tm: *c.tm) TimestampError!void {
     if (builtin.target.os.tag == .windows) {
-        if (@hasDecl(c, "localtime_s")) {
-            if (c.localtime_s(out_tm, t_value) != 0) return error.InvalidTimeZone;
-            return;
+        if (builtin.target.abi == .msvc) {
+            if (@hasDecl(c, "localtime_s")) {
+                if (c.localtime_s(out_tm, t_value) != 0) return error.InvalidTimeZone;
+                return;
+            }
         }
         if (@hasDecl(c, "localtime")) {
             const res = c.localtime(t_value) orelse return error.InvalidTimeZone;
