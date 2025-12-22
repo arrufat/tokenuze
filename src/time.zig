@@ -224,8 +224,14 @@ fn formatTimestampForLocalTimezone(allocator: std.mem.Allocator, timestamp: []co
         @as(i32, @intCast(@divTrunc(@field(local_tm, "tm_gmtoff"), 60)))
     else if (@hasField(c.tm, "__tm_gmtoff"))
         @as(i32, @intCast(@divTrunc(@field(local_tm, "__tm_gmtoff"), 60)))
-    else
-        (detectLocalTimezoneOffsetMinutes() catch default_timezone_offset_minutes);
+    else blk: {
+        var utc_tm: c.tm = undefined;
+        gmtimeSafe(&t_value, &utc_tm) catch break :blk default_timezone_offset_minutes;
+        const local_secs = tmToUnixSeconds(local_tm);
+        const utc_secs = tmToUnixSeconds(utc_tm);
+        const delta = local_secs - utc_secs;
+        break :blk @as(i32, @intCast(@divTrunc(delta, 60)));
+    };
 
     var tz_buf: [16]u8 = undefined;
     const tz_label = formatTimezoneLabel(&tz_buf, tz_minutes);
@@ -500,5 +506,24 @@ fn localtimeSafe(t_value: *c.time_t, out_tm: *c.tm) TimestampError!void {
         return error.InvalidTimeZone;
     } else {
         if (c.localtime_r(t_value, out_tm) == null) return error.InvalidTimeZone;
+    }
+}
+
+fn gmtimeSafe(t_value: *c.time_t, out_tm: *c.tm) TimestampError!void {
+    if (builtin.target.os.tag == .windows) {
+        if (builtin.target.abi == .msvc) {
+            if (@hasDecl(c, "gmtime_s")) {
+                if (c.gmtime_s(out_tm, t_value) != 0) return error.InvalidTimeZone;
+                return;
+            }
+        }
+        if (@hasDecl(c, "gmtime")) {
+            const res = c.gmtime(t_value) orelse return error.InvalidTimeZone;
+            out_tm.* = res.*;
+            return;
+        }
+        return error.InvalidTimeZone;
+    } else {
+        if (c.gmtime_r(t_value, out_tm) == null) return error.InvalidTimeZone;
     }
 }
