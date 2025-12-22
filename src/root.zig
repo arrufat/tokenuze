@@ -24,6 +24,7 @@ const timeutil = @import("time.zig");
 pub const parseTimezoneOffsetMinutes = timeutil.parseTimezoneOffsetMinutes;
 pub const detectLocalTimezoneOffsetMinutes = timeutil.detectLocalTimezoneOffsetMinutes;
 pub const default_timezone_offset_minutes = timeutil.default_timezone_offset_minutes;
+pub const local_timezone_sentinel = timeutil.local_timezone_sentinel;
 pub const formatTimezoneLabel = timeutil.formatTimezoneLabel;
 const nsToMs = timeutil.nsToMs;
 pub const uploader = @import("upload.zig");

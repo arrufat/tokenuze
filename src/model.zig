@@ -300,6 +300,10 @@ const pricing_aliases = [_]struct { alias: []const u8, target: []const u8 }{
     // Grok / xAI
     .{ .alias = "grok code fast 1", .target = "xai/grok-code-fast-1" },
 
+    // Codex variants (LiteLLM currently only lists gpt-5 / gpt-5.2 base models)
+    .{ .alias = "gpt-5.2-codex", .target = "gpt-5" },
+    .{ .alias = "gpt-5.2-codex-max", .target = "gpt-5" },
+
     // Kimi / Moonshot variants seen in routers and UI
     .{ .alias = "kimi k2 0905", .target = "deepinfra/moonshotai/Kimi-K2-Instruct-0905" },
     .{ .alias = "kimi k2 0905 exacto", .target = "deepinfra/moonshotai/Kimi-K2-Instruct-0905" },
@@ -806,12 +810,13 @@ fn resolveModelPricing(
     pricing_map: *PricingMap,
     model_name: []const u8,
 ) ?ModelPricing {
+    if (pricing_map.get(model_name)) |rate| return rate;
+
     if (pricingAliasTarget(model_name)) |target| {
         if (resolveWithName(allocator, pricing_map, target, model_name)) |rate| return rate;
     }
 
-    if (resolveWithName(allocator, pricing_map, model_name, model_name)) |rate|
-        return rate;
+    if (resolveWithName(allocator, pricing_map, model_name, model_name)) |rate| return rate;
 
     var variants: [6]?[]u8 = @splat(null);
     var variant_count: usize = 0;

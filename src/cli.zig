@@ -134,10 +134,7 @@ fn parseOptionsIterator(args: anytype) CliError!CliOptions {
     }
 
     if (!timezone_specified) {
-        const fallback_offset = tokenuze.default_timezone_offset_minutes;
-        const detected = tokenuze.detectLocalTimezoneOffsetMinutes() catch fallback_offset;
-        const clamped = std.math.clamp(detected, -12 * 60, 14 * 60);
-        options.filters.timezone_offset_minutes = @intCast(clamped);
+        options.filters.timezone_offset_minutes = @intCast(tokenuze.local_timezone_sentinel);
     }
 
     return options;

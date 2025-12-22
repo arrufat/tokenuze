@@ -8,6 +8,15 @@ const ModelState = provider.ModelState;
 
 const token_count_type = "token_count";
 
+const CODEX_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
+    .{ .key = "input_tokens", .field = .input_tokens },
+    .{ .key = "cached_input_tokens", .field = .cached_input_tokens },
+    .{ .key = "cache_read_input_tokens", .field = .cache_read_input_tokens },
+    .{ .key = "output_tokens", .field = .output_tokens },
+    .{ .key = "reasoning_output_tokens", .field = .reasoning_output_tokens },
+    .{ .key = "total_tokens", .field = .total_tokens },
+};
+
 const fallback_pricing = [_]provider.FallbackPricingEntry{
     .{ .name = "gpt-5", .pricing = .{
         .input_cost_per_m = 1.25,
@@ -281,11 +290,11 @@ fn parseInfoField(
     if (try parseSharedPayloadField(allocator, reader, key, payload_result)) return;
 
     if (std.mem.eql(u8, key, "last_token_usage")) {
-        payload_result.last_usage = try provider.jsonParseUsageObject(allocator, reader);
+        payload_result.last_usage = try provider.jsonParseUsageObjectWithDescriptors(allocator, reader, CODEX_USAGE_FIELDS[0..]);
         return;
     }
     if (std.mem.eql(u8, key, "total_token_usage")) {
-        payload_result.total_usage = try provider.jsonParseUsageObject(allocator, reader);
+        payload_result.total_usage = try provider.jsonParseUsageObjectWithDescriptors(allocator, reader, CODEX_USAGE_FIELDS[0..]);
         return;
     }
 
