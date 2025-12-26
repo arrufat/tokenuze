@@ -38,6 +38,7 @@ pub fn runFixtureParse(
     allocator: std.mem.Allocator,
     fixture_path: []const u8,
     parse_fn: fn (
+        std.Io,
         std.mem.Allocator,
         std.mem.Allocator,
         model.DateFilters,
@@ -57,6 +58,10 @@ pub fn runFixtureParse(
 
     const consumer = makeCapturingConsumer(&events);
 
-    try parse_fn(allocator, allocator, .{}, consumer, json_payload);
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
+    try parse_fn(io, allocator, allocator, .{}, consumer, json_payload);
     return events.items.len;
 }

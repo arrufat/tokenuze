@@ -89,6 +89,7 @@ fn parseSessionFile(
         .previous_totals = &previous_totals,
         .model_state = &model_state,
         .timezone_offset_minutes = timezone_offset_minutes,
+        .io = runtime.io,
     };
 
     try provider.streamJsonLines(
@@ -116,6 +117,7 @@ const LineHandler = struct {
     previous_totals: *?RawUsage,
     model_state: *ModelState,
     timezone_offset_minutes: i32,
+    io: std.Io,
 
     fn handle(self: *LineHandler, line: []const u8, line_index: usize) !void {
         provider.parseJsonLine(self.allocator, line, self, processSessionLine) catch |err| {
@@ -205,7 +207,7 @@ const LineHandler = struct {
             .is_fallback = resolved.is_fallback,
             .display_input_tokens = provider.ParseContext.computeDisplayInput(delta),
         };
-        try self.sink.emit(event);
+        try self.sink.emit(self.io, event);
     }
 };
 

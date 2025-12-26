@@ -8,7 +8,7 @@ const nsToMs = timeutil.nsToMs;
 
 pub const EventConsumer = struct {
     context: *anyopaque,
-    mutex: ?*std.Thread.Mutex = null,
+    mutex: ?*std.Io.Mutex = null,
     ingest: *const fn (*anyopaque, std.mem.Allocator, *const model.TokenUsageEvent, model.DateFilters) model.IngestError!void,
 };
 
@@ -119,7 +119,7 @@ fn modelSliceFrom(comptime T: type, raw_model: T) ?[]const u8 {
 }
 
 pub const MessageDeduper = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     map: std.AutoHashMap(u64, void),
 
     pub fn init(allocator: std.mem.Allocator) !MessageDeduper {
@@ -130,9 +130,9 @@ pub const MessageDeduper = struct {
         self.map.deinit();
     }
 
-    pub fn mark(self: *MessageDeduper, key: u64) !bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn mark(self: *MessageDeduper, io: std.Io, key: u64) !bool {
+        try self.mutex.lock(io);
+        defer self.mutex.unlock(io);
         const gop = try self.map.getOrPut(key);
         if (gop.found_existing) return false;
         return true;
@@ -204,6 +204,7 @@ pub fn updateTimestampFromReader(
 }
 
 pub fn emitUsageEventWithTimestamp(
+    io: std.Io,
     ctx: *const ParseContext,
     allocator: std.mem.Allocator,
     state: *ModelState,
@@ -227,7 +228,7 @@ pub fn emitUsageEventWithTimestamp(
         .is_fallback = resolved.is_fallback,
         .display_input_tokens = ParseContext.computeDisplayInput(usage),
     };
-    try sink.emit(event);
+    try sink.emit(io, event);
 }
 
 pub fn overrideSessionLabelFromSlice(
@@ -425,10 +426,10 @@ pub fn streamJsonLines(
 
 pub const EventSink = struct {
     context: *anyopaque,
-    emitFn: *const fn (*anyopaque, model.TokenUsageEvent) anyerror!void,
+    emitFn: *const fn (*anyopaque, std.Io, model.TokenUsageEvent) anyerror!void,
 
-    pub fn emit(self: EventSink, event: model.TokenUsageEvent) !void {
-        try self.emitFn(self.context, event);
+    pub fn emit(self: EventSink, io: std.Io, event: model.TokenUsageEvent) !void {
+        try self.emitFn(self.context, io, event);
     }
 };
 
@@ -444,7 +445,8 @@ pub const EventListCollector = struct {
         return .{ .context = self, .emitFn = EventListCollector.emit };
     }
 
-    fn emit(ctx_ptr: *anyopaque, event: model.TokenUsageEvent) anyerror!void {
+    fn emit(ctx_ptr: *anyopaque, io: std.Io, event: model.TokenUsageEvent) anyerror!void {
+        _ = io;
         const self: *EventListCollector = @ptrCast(@alignCast(ctx_ptr));
         try self.list.append(self.allocator, event);
     }
@@ -1075,7 +1077,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
             var events_timer = try std.time.Timer.start();
             const before_events = summaries.eventCount();
-            var builder_mutex = std.Thread.Mutex{};
+            var builder_mutex: std.Io.Mutex = .init;
             var summary_ctx = SummaryConsumer{ .builder = summaries };
             const consumer = EventConsumer{
                 .context = @ptrCast(&summary_ctx),
@@ -1247,10 +1249,10 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     const sink = EventSink{
                         .context = shared_ctx,
                         .emitFn = struct {
-                            fn emit(ctx_ptr: *anyopaque, event: model.TokenUsageEvent) anyerror!void {
+                            fn emit(ctx_ptr: *anyopaque, emit_io: std.Io, event: model.TokenUsageEvent) anyerror!void {
                                 const local_ctx: *SharedContext = @ptrCast(@alignCast(ctx_ptr));
-                                if (local_ctx.consumer.mutex) |mutex| mutex.lock();
-                                defer if (local_ctx.consumer.mutex) |mutex| mutex.unlock();
+                                if (local_ctx.consumer.mutex) |mutex| try mutex.lock(emit_io);
+                                defer if (local_ctx.consumer.mutex) |mutex| mutex.unlock(emit_io);
                                 try local_ctx.consumer.ingest(
                                     local_ctx.consumer.context,
                                     local_ctx.shared_allocator,

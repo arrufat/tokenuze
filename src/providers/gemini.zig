@@ -95,6 +95,7 @@ fn parseSessionFile(
         sink: provider.EventSink,
         previous_totals: *?RawUsage,
         model_state: *ModelState,
+        io: std.Io,
 
         fn run(self: *@This(), scratch: std.mem.Allocator, reader: *std.json.Reader) !void {
             var parsed = try std.json.parseFromTokenSource(SessionDoc, scratch, reader, .{
@@ -153,6 +154,7 @@ fn parseSessionFile(
                 var slot: ?provider.TimestampInfo = timestamp_info;
                 defer if (slot) |info| self.allocator.free(info.text);
                 try provider.emitUsageEventWithTimestamp(
+                    self.io,
                     self.ctx,
                     self.allocator,
                     self.model_state,
@@ -175,6 +177,7 @@ fn parseSessionFile(
         .sink = sink,
         .previous_totals = &previous_totals,
         .model_state = &model_state,
+        .io = runtime.io,
     };
 
     try provider.withJsonDocumentReader(

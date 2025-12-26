@@ -87,6 +87,7 @@ fn parseSessionFile(
         session_id: []const u8,
         timezone_offset_minutes: i32,
         sink: provider.EventSink,
+        io: std.Io,
 
         fn run(self: *@This(), scratch: std.mem.Allocator, reader: *std.json.Reader) !void {
             var parsed = try std.json.parseFromTokenSource(SessionDoc, scratch, reader, .{
@@ -156,6 +157,7 @@ fn parseSessionFile(
 
                 var model_state = provider.ModelState{};
                 provider.emitUsageEventWithTimestamp(
+                    self.io,
                     self.ctx,
                     self.allocator,
                     &model_state,
@@ -175,6 +177,7 @@ fn parseSessionFile(
         .session_id = session_id,
         .timezone_offset_minutes = timezone_offset_minutes,
         .sink = sink,
+        .io = runtime.io,
     };
 
     try provider.withJsonDocumentReader(
