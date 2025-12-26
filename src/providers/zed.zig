@@ -26,7 +26,7 @@ pub fn collect(
     filters: model.DateFilters,
     progress: ?std.Progress.Node,
 ) !void {
-    var builder_mutex = std.Thread.Mutex{};
+    var builder_mutex: std.Io.Mutex = .init;
     var summary_ctx = struct {
         builder: *model.SummaryBuilder,
     }{ .builder = summaries };
@@ -65,7 +65,11 @@ pub fn streamEvents(
     };
     defer temp_allocator.free(json_rows);
 
-    parseRows(shared_allocator, temp_allocator, filters, consumer, json_rows) catch |err| {
+    var io_single: std.Io.Threaded = .init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
+    parseRows(io, shared_allocator, temp_allocator, filters, consumer, json_rows) catch |err| {
         std.log.warn("zed: failed to parse sqlite output ({s})", .{@errorName(err)});
     };
 }
@@ -141,6 +145,7 @@ fn runSqliteQuery(allocator: std.mem.Allocator, db_path: []const u8) ![]u8 {
 }
 
 fn parseRows(
+    io: std.Io,
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
@@ -152,7 +157,7 @@ fn parseRows(
     switch (parsed.value) {
         .array => |rows| {
             for (rows.items) |row_value| {
-                try parseRow(shared_allocator, temp_allocator, filters, consumer, row_value);
+                try parseRow(io, shared_allocator, temp_allocator, filters, consumer, row_value);
             }
         },
         else => return error.InvalidJson,
@@ -160,6 +165,7 @@ fn parseRows(
 }
 
 fn parseRow(
+    io: std.Io,
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
@@ -203,7 +209,7 @@ fn parseRow(
     };
     defer shared_allocator.free(json_data);
 
-    parseThread(shared_allocator, temp_allocator, filters, consumer, thread_id, updated_at, json_data) catch |err| {
+    parseThread(io, shared_allocator, temp_allocator, filters, consumer, thread_id, updated_at, json_data) catch |err| {
         std.log.warn("zed: parse thread failed ({s})", .{@errorName(err)});
     };
 }
@@ -250,6 +256,7 @@ fn decompressZstd(allocator: std.mem.Allocator, blob: []const u8) ![]u8 {
 }
 
 fn parseThread(
+    io: std.Io,
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
@@ -274,7 +281,7 @@ fn parseThread(
     }
 
     if (obj.get("request_token_usage")) |usage_val| {
-        try parseRequestUsageValue(shared_allocator, temp_allocator, filters, consumer, usage_val, thread_id, updated_at, model_name);
+        try parseRequestUsageValue(io, shared_allocator, temp_allocator, filters, consumer, usage_val, thread_id, updated_at, model_name);
     }
 }
 
@@ -295,6 +302,7 @@ fn parseModelValue(allocator: std.mem.Allocator, val: std.json.Value) !?[]u8 {
 }
 
 fn parseRequestUsageValue(
+    io: std.Io,
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
@@ -314,11 +322,12 @@ fn parseRequestUsageValue(
     var it = obj.iterator();
     while (it.next()) |entry| {
         const req_id = entry.key_ptr.*;
-        try parseUsageEntryValue(shared_allocator, temp_allocator, filters, consumer, req_id, entry.value_ptr.*, thread_id, timestamp_info, model_name);
+        try parseUsageEntryValue(io, shared_allocator, temp_allocator, filters, consumer, req_id, entry.value_ptr.*, thread_id, timestamp_info, model_name);
     }
 }
 
 fn parseUsageEntryValue(
+    io: std.Io,
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
@@ -364,7 +373,7 @@ fn parseUsageEntryValue(
         .display_input_tokens = provider.ParseContext.computeDisplayInput(usage),
     };
 
-    if (consumer.mutex) |m| m.lock();
-    defer if (consumer.mutex) |m| m.unlock();
+    if (consumer.mutex) |m| try m.lock(io);
+    defer if (consumer.mutex) |m| m.unlock(io);
     try consumer.ingest(consumer.context, shared_allocator, &event, filters);
 }

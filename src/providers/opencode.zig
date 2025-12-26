@@ -54,6 +54,7 @@ const MessageRecord = struct {
     sink: provider.EventSink,
     session_label: []const u8,
     timezone_offset_minutes: i32,
+    io: std.Io,
 
     role_assistant: bool = false,
     timestamp_ms: ?u64 = null,
@@ -194,7 +195,7 @@ const MessageRecord = struct {
             .is_fallback = false,
             .display_input_tokens = provider.ParseContext.computeDisplayInput(usage),
         };
-        try self.sink.emit(event);
+        try self.sink.emit(self.io, event);
     }
 };
 
@@ -361,6 +362,7 @@ fn parseMessageFile(
         .sink = sink,
         .session_label = session_label,
         .timezone_offset_minutes = timezone_offset_minutes,
+        .io = io,
     };
     defer if (record.model_name) |name| allocator.free(name);
 

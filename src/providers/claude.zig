@@ -66,11 +66,12 @@ const EventBuilder = struct {
     fn emit(self: *EventBuilder) !void {
         if (!self.type_is_assistant) return;
         const usage_raw = self.usage orelse return;
-        if (!try shouldEmitClaudeMessage(self.handler.deduper, self.request_id, self.message_id)) {
+        if (!try shouldEmitClaudeMessage(self.handler.deduper, self.request_id, self.message_id, self.handler.io)) {
             return;
         }
         const usage = model.TokenUsage.fromRaw(usage_raw);
         try provider.emitUsageEventWithTimestamp(
+            self.handler.io,
             self.handler.ctx,
             self.handler.allocator,
             self.handler.model_state,
@@ -107,6 +108,7 @@ fn parseClaudeSessionFile(
         .timezone_offset_minutes = timezone_offset_minutes,
         .sink = sink,
         .model_state = &model_state,
+        .io = runtime.io,
     };
 
     try provider.streamJsonLines(
@@ -135,6 +137,7 @@ const LineHandler = struct {
     timezone_offset_minutes: i32,
     sink: provider.EventSink,
     model_state: *ModelState,
+    io: std.Io,
 
     fn handle(self: *LineHandler, line: []const u8, line_index: usize) !void {
         self.processLine(line) catch |err| {
@@ -246,13 +249,14 @@ fn shouldEmitClaudeMessage(
     deduper: ?*MessageDeduper,
     request_id: ?[]const u8,
     message_id: ?[]const u8,
+    io: std.Io,
 ) !bool {
     const dedupe = deduper orelse return true;
     const msg_id = message_id orelse return true;
     const req_id = request_id orelse return true;
     var hash = std.hash.Wyhash.hash(0, msg_id);
     hash = std.hash.Wyhash.hash(hash, req_id);
-    return try dedupe.mark(hash);
+    return try dedupe.mark(io, hash);
 }
 
 test "claude parser emits assistant usage events and respects overrides" {

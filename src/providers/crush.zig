@@ -19,7 +19,7 @@ pub fn collect(
     filters: model.DateFilters,
     progress: ?std.Progress.Node,
 ) !void {
-    var builder_mutex = std.Thread.Mutex{};
+    var builder_mutex: std.Io.Mutex = .init;
     var summary_ctx = struct {
         builder: *model.SummaryBuilder,
     }{ .builder = summaries };
@@ -61,15 +61,6 @@ pub fn streamEvents(
     else
         null;
 
-    var work_state = WorkState{
-        .paths = db_paths.items,
-        .next_index = .init(0),
-        .filters = filters,
-        .consumer = consumer,
-        .shared_allocator = shared_allocator,
-        .progress = progress_node,
-    };
-
     const cpu_count = std.Thread.getCpuCount() catch |err| blk: {
         std.log.debug("crush: getCpuCount failed, defaulting to 1 ({s})", .{@errorName(err)});
         break :blk 1;
@@ -79,6 +70,16 @@ pub fn streamEvents(
     var threaded = std.Io.Threaded.init(shared_allocator);
     defer threaded.deinit();
     const io = threaded.io();
+
+    var work_state = WorkState{
+        .paths = db_paths.items,
+        .next_index = .init(0),
+        .filters = filters,
+        .consumer = consumer,
+        .shared_allocator = shared_allocator,
+        .progress = progress_node,
+        .io = io,
+    };
 
     var group = std.Io.Group.init;
     for (0..worker_count) |_| {
@@ -99,6 +100,7 @@ const WorkState = struct {
     consumer: provider.EventConsumer,
     shared_allocator: std.mem.Allocator,
     progress: ?std.Progress.Node,
+    io: std.Io,
 };
 
 fn workerMain(state: *WorkState) void {
@@ -132,7 +134,7 @@ fn processDb(state: *const WorkState, temp_allocator: std.mem.Allocator, db_path
     };
     defer temp_allocator.free(json_rows);
 
-    parseRows(state.shared_allocator, temp_allocator, state.filters, state.consumer, json_rows) catch |err| {
+    parseRows(state.io, state.shared_allocator, temp_allocator, state.filters, state.consumer, json_rows) catch |err| {
         std.log.warn("crush: failed to parse sqlite output from {s} ({s})", .{ db_path, @errorName(err) });
     };
 }
@@ -254,6 +256,7 @@ fn runSqliteQuery(allocator: std.mem.Allocator, db_path: []const u8) ![]u8 {
 }
 
 fn parseRows(
+    io: std.Io,
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
@@ -265,7 +268,7 @@ fn parseRows(
     switch (parsed.value) {
         .array => |rows| {
             for (rows.items) |row_value| {
-                try parseRow(shared_allocator, temp_allocator, filters, consumer, row_value);
+                try parseRow(io, shared_allocator, temp_allocator, filters, consumer, row_value);
             }
         },
         else => return error.InvalidJson,
@@ -273,6 +276,7 @@ fn parseRows(
 }
 
 fn parseRow(
+    io: std.Io,
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     filters: model.DateFilters,
@@ -318,8 +322,8 @@ fn parseRow(
         .display_input_tokens = prompt_tokens,
     };
 
-    if (consumer.mutex) |m| m.lock();
-    defer if (consumer.mutex) |m| m.unlock();
+    if (consumer.mutex) |m| try m.lock(io);
+    defer if (consumer.mutex) |m| m.unlock(io);
     try consumer.ingest(consumer.context, shared_allocator, &event, filters);
 }
 
