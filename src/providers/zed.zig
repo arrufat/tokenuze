@@ -65,9 +65,9 @@ pub fn streamEvents(
     };
     defer temp_allocator.free(json_rows);
 
-    var threaded = std.Io.Threaded.init(shared_allocator);
-    defer threaded.deinit();
-    const io = threaded.io();
+    var io_single: std.Io.Threaded = .init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
 
     parseRows(io, shared_allocator, temp_allocator, filters, consumer, json_rows) catch |err| {
         std.log.warn("zed: failed to parse sqlite output ({s})", .{@errorName(err)});
