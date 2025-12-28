@@ -30,21 +30,25 @@ pub fn main() !void {
         },
         else => return err,
     };
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
     tokenuze.setLogLevel(options.log_level);
     if (options.show_help) {
-        try cli.printHelp();
+        try cli.printHelp(io);
         return;
     }
     if (options.show_version) {
-        try cli.printVersion(build_options.version);
+        try cli.printVersion(io, build_options.version);
         return;
     }
     if (options.list_agents) {
-        try cli.printAgentList(allocator);
+        try cli.printAgentList(io, allocator);
         return;
     }
     if (options.machine_id) {
-        try printMachineId(allocator);
+        try printMachineId(io, allocator);
         return;
     }
     if (options.upload) {
@@ -90,19 +94,15 @@ pub fn main() !void {
         }
     }
     if (options.sessions) {
-        try handleSessionsOutput(allocator, options);
+        try handleSessionsOutput(io, allocator, options);
         return;
     }
 
-    try tokenuze.run(allocator, options.filters, options.providers);
+    try tokenuze.run(io, allocator, options.filters, options.providers);
 }
 
-fn printMachineId(allocator: std.mem.Allocator) !void {
+fn printMachineId(io: std.Io, allocator: std.mem.Allocator) !void {
     const id = try tokenuze.machine_id.getMachineId(allocator);
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
     var buffer: [256]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, buffer[0..]);
     const writer = &stdout.interface;
@@ -113,11 +113,7 @@ fn printMachineId(allocator: std.mem.Allocator) !void {
     };
 }
 
-fn handleSessionsOutput(allocator: std.mem.Allocator, options: cli.CliOptions) !void {
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
+fn handleSessionsOutput(io: std.Io, allocator: std.mem.Allocator, options: cli.CliOptions) !void {
     var buffer: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, buffer[0..]);
     const writer = &stdout.interface;

@@ -221,14 +221,10 @@ pub fn findProviderIndex(name: []const u8) ?usize {
     return null;
 }
 
-pub fn run(allocator: std.mem.Allocator, filters: DateFilters, selection: ProviderSelection) !void {
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
+pub fn run(io: std.Io, allocator: std.mem.Allocator, filters: DateFilters, selection: ProviderSelection) !void {
     const enable_progress = std.Io.File.stdout().isTty(io) catch false;
     logRunStart(filters, selection, enable_progress);
-    var summary = try collectSummary(allocator, filters, selection, enable_progress);
+    var summary = try collectSummary(io, allocator, filters, selection, enable_progress);
     defer summary.deinit(allocator);
 
     var stdout_buffer: [4096]u8 = undefined;
@@ -242,7 +238,11 @@ pub fn run(allocator: std.mem.Allocator, filters: DateFilters, selection: Provid
 }
 
 pub fn renderSummaryAlloc(allocator: std.mem.Allocator, filters: DateFilters, selection: ProviderSelection) ![]u8 {
-    var summary = try collectSummaryInternal(allocator, filters, selection, false, null, null);
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
+    var summary = try collectSummaryInternal(io, allocator, filters, selection, false, null, null);
     defer summary.deinit(allocator);
     return try renderSummaryBuffer(allocator, summary.builder.items(), &summary.totals, filters.pretty_output);
 }
@@ -288,7 +288,11 @@ pub fn collectSessionsWithCache(
     var recorder = model.SessionRecorder.init(allocator);
     errdefer recorder.deinit(allocator);
 
-    var summary = try collectSummaryInternal(allocator, filters, selection, false, &recorder, cache);
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
+    var summary = try collectSummaryInternal(io, allocator, filters, selection, false, &recorder, cache);
     // Mirror the aggregated totals from the daily summary to keep --sessions output
     // in lockstep with the default summary, even if per-session pricing or
     // grouping would introduce tiny floating-point differences.
@@ -319,7 +323,11 @@ pub fn collectUploadReportWithCache(
     var recorder = model.SessionRecorder.init(allocator);
     defer recorder.deinit(allocator);
 
-    var summary = try collectSummaryInternal(allocator, filters, selection, false, &recorder, cache);
+    var io_single = std.Io.Threaded.init_single_threaded;
+    defer io_single.deinit();
+    const io = io_single.io();
+
+    var summary = try collectSummaryInternal(io, allocator, filters, selection, false, &recorder, cache);
     defer summary.deinit(allocator);
 
     const daily_json = try renderSummaryBuffer(allocator, summary.builder.items(), &summary.totals, filters.pretty_output);
@@ -445,15 +453,17 @@ fn flushOutput(writer: anytype) !void {
 }
 
 fn collectSummary(
+    io: std.Io,
     allocator: std.mem.Allocator,
     filters: DateFilters,
     selection: ProviderSelection,
     enable_progress: bool,
 ) !SummaryResult {
-    return collectSummaryInternal(allocator, filters, selection, enable_progress, null, null);
+    return collectSummaryInternal(io, allocator, filters, selection, enable_progress, null, null);
 }
 
 fn collectSummaryInternal(
+    io: std.Io,
     allocator: std.mem.Allocator,
     filters: DateFilters,
     selection: ProviderSelection,
@@ -461,10 +471,6 @@ fn collectSummaryInternal(
     session_recorder: ?*model.SessionRecorder,
     pricing_cache: ?*PricingCache,
 ) !SummaryResult {
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
     var summary_builder = model.SummaryBuilder.init(allocator);
     errdefer summary_builder.deinit(allocator);
     if (session_recorder) |recorder| summary_builder.attachSessionRecorder(recorder);
