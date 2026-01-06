@@ -9,7 +9,7 @@ const cli = @import("cli.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const native_os = builtin.target.os.tag;
     const choice = blk: {
         if (native_os == .wasi) break :blk .{ .allocator = std.heap.wasm_allocator, .is_debug = false };
@@ -23,32 +23,35 @@ pub fn main() !void {
     };
 
     const allocator = choice.allocator;
+    const ctx = tokenuze.Context{
+        .allocator = allocator,
+        .temp_allocator = std.heap.page_allocator,
+        .io = init.io,
+        .environ_map = init.environ_map,
+    };
 
-    const options = cli.parseOptions(allocator) catch |err| switch (err) {
+    const options = cli.parseOptions(allocator, init.minimal.args) catch |err| switch (err) {
         cli.CliError.InvalidUsage => {
             std.process.exit(1);
         },
         else => return err,
     };
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
 
     tokenuze.setLogLevel(options.log_level);
     if (options.show_help) {
-        try cli.printHelp(io);
+        try cli.printHelp(ctx.io);
         return;
     }
     if (options.show_version) {
-        try cli.printVersion(io, build_options.version);
+        try cli.printVersion(ctx.io, build_options.version);
         return;
     }
     if (options.list_agents) {
-        try cli.printAgentList(io, allocator);
+        try cli.printAgentList(ctx);
         return;
     }
     if (options.machine_id) {
-        try printMachineId(io, allocator);
+        try printMachineId(ctx);
         return;
     }
     if (options.upload) {
@@ -63,7 +66,7 @@ pub fn main() !void {
             if (!options.providers.includesIndex(idx)) continue;
             var single = tokenuze.ProviderSelection.initEmpty();
             single.includeIndex(idx);
-            var report = try tokenuze.collectUploadReportWithCache(allocator, options.filters, single, &pricing_cache);
+            var report = try tokenuze.collectUploadReportWithCache(ctx, options.filters, single, &pricing_cache);
             const entry = tokenuze.uploader.ProviderUpload{
                 .name = provider.name,
                 .daily_summary = report.daily_json,
@@ -84,27 +87,23 @@ pub fn main() !void {
             allocator.free(entry.daily_summary);
             allocator.free(entry.sessions_summary);
         };
-        try tokenuze.uploader.run(
-            allocator,
-            uploads.items,
-            options.filters.timezone_offset_minutes,
-        );
+        try tokenuze.uploader.run(ctx, uploads.items, options.filters.timezone_offset_minutes);
         if (!options.output_explicit) {
             return;
         }
     }
     if (options.sessions) {
-        try handleSessionsOutput(io, allocator, options);
+        try handleSessionsOutput(ctx, options);
         return;
     }
 
-    try tokenuze.run(io, allocator, options.filters, options.providers);
+    try tokenuze.runWithContext(ctx, options.filters, options.providers);
 }
 
-fn printMachineId(io: std.Io, allocator: std.mem.Allocator) !void {
-    const id = try tokenuze.machine_id.getMachineId(allocator);
+fn printMachineId(ctx: tokenuze.Context) !void {
+    const id = try tokenuze.machine_id.getMachineId(ctx);
     var buffer: [256]u8 = undefined;
-    var stdout = std.Io.File.stdout().writer(io, buffer[0..]);
+    var stdout = std.Io.File.stdout().writer(ctx.io, buffer[0..]);
     const writer = &stdout.interface;
     try writer.print("{s}\n", .{id[0..]});
     writer.flush() catch |err| switch (err) {
@@ -113,28 +112,23 @@ fn printMachineId(io: std.Io, allocator: std.mem.Allocator) !void {
     };
 }
 
-fn handleSessionsOutput(io: std.Io, allocator: std.mem.Allocator, options: cli.CliOptions) !void {
+fn handleSessionsOutput(ctx: tokenuze.Context, options: cli.CliOptions) !void {
     var buffer: [4096]u8 = undefined;
-    var stdout = std.Io.File.stdout().writer(io, buffer[0..]);
+    var stdout = std.Io.File.stdout().writer(ctx.io, buffer[0..]);
     const writer = &stdout.interface;
 
-    var cache = tokenuze.PricingCache.init(allocator);
-    defer cache.deinit(allocator);
+    var cache = tokenuze.PricingCache.init(ctx.allocator);
+    defer cache.deinit(ctx.allocator);
 
-    var recorder = try tokenuze.collectSessionsWithCache(
-        allocator,
-        options.filters,
-        options.providers,
-        &cache,
-    );
-    defer recorder.deinit(allocator);
+    var recorder = try tokenuze.collectSessionsWithCacheWithContext(ctx, options.filters, options.providers, &cache);
+    defer recorder.deinit(ctx.allocator);
 
     if (options.filters.output_format == .table) {
         const tz_offset: i32 = @intCast(options.filters.timezone_offset_minutes);
-        try tokenuze.renderSessionsTable(writer, allocator, &recorder, tz_offset);
+        try tokenuze.renderSessionsTable(writer, ctx.allocator, &recorder, tz_offset);
     } else {
-        const json = try recorder.renderJson(allocator, options.filters.pretty_output);
-        defer allocator.free(json);
+        const json = try recorder.renderJson(ctx.allocator, options.filters.pretty_output);
+        defer ctx.allocator.free(json);
         try writer.print("{s}\n", .{json});
     }
     writer.flush() catch |err| switch (err) {

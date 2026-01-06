@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
+const Context = @import("../Context.zig");
 const model = @import("../model.zig");
 const provider = @import("provider.zig");
 const test_helpers = @import("test_helpers.zig");
@@ -8,13 +9,12 @@ const test_helpers = @import("test_helpers.zig");
 const db_dirname = ".crush";
 const db_filename = "crush.db";
 
-pub fn pathHint(allocator: std.mem.Allocator) ![]u8 {
-    return allocator.dupe(u8, ".crush/crush.db (searched recursively from cwd)");
+pub fn pathHint(ctx: Context) ![]u8 {
+    return ctx.allocator.dupe(u8, ".crush/crush.db (searched recursively from cwd)");
 }
 
 pub fn collect(
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     summaries: *model.SummaryBuilder,
     filters: model.DateFilters,
     progress: ?std.Progress.Node,
@@ -29,30 +29,25 @@ pub fn collect(
         .mutex = &builder_mutex,
         .ingest = struct {
             fn ingest(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, event: *const model.TokenUsageEvent, f: model.DateFilters) model.IngestError!void {
-                const ctx: *@TypeOf(summary_ctx) = @ptrCast(@alignCast(ctx_ptr));
-                try ctx.builder.ingest(allocator, event, f);
+                const summary: *@TypeOf(summary_ctx) = @ptrCast(@alignCast(ctx_ptr));
+                try summary.builder.ingest(allocator, event, f);
             }
         }.ingest,
     };
 
-    try streamEvents(shared_allocator, temp_allocator, filters, consumer, progress);
+    try streamEvents(ctx, filters, consumer, progress);
 }
 
 pub fn streamEvents(
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
-    var threaded = std.Io.Threaded.init(shared_allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var db_paths = try findCrushDbPaths(shared_allocator, temp_allocator, io);
+    var db_paths = try findCrushDbPaths(ctx);
     defer {
-        for (db_paths.items) |p| shared_allocator.free(p);
-        db_paths.deinit(shared_allocator);
+        for (db_paths.items) |p| ctx.allocator.free(p);
+        db_paths.deinit(ctx.allocator);
     }
 
     if (db_paths.items.len == 0) {
@@ -72,20 +67,19 @@ pub fn streamEvents(
     const worker_count = @max(@as(usize, 1), @min(db_paths.items.len, cpu_count));
 
     var work_state = WorkState{
+        .ctx = ctx,
         .paths = db_paths.items,
         .next_index = .init(0),
         .filters = filters,
         .consumer = consumer,
-        .shared_allocator = shared_allocator,
         .progress = progress_node,
-        .io = io,
     };
 
     var group = std.Io.Group.init;
     for (0..worker_count) |_| {
-        group.async(io, workerMain, .{&work_state});
+        group.async(ctx.io, workerMain, .{&work_state});
     }
-    try group.await(io);
+    try group.await(ctx.io);
 }
 
 pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.PricingMap) !void {
@@ -94,13 +88,12 @@ pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.Pric
 }
 
 const WorkState = struct {
+    ctx: Context,
     paths: [][]u8,
     next_index: std.atomic.Value(usize),
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
-    shared_allocator: std.mem.Allocator,
     progress: ?std.Progress.Node,
-    io: std.Io,
 };
 
 fn workerMain(state: *WorkState) void {
@@ -112,14 +105,14 @@ fn workerMain(state: *WorkState) void {
         const idx = state.next_index.fetchAdd(1, .acq_rel);
         if (idx >= state.paths.len) break;
         const path = state.paths[idx];
-        processDb(state, temp_alloc, path);
+        processDb(state.ctx.withTemp(temp_alloc), state.filters, state.consumer, path);
         _ = arena.reset(.retain_capacity);
         if (state.progress) |p| p.completeOne();
     }
 }
 
-fn processDb(state: *const WorkState, temp_allocator: std.mem.Allocator, db_path: []const u8) void {
-    std.Io.Dir.cwd().access(state.io, db_path, .{}) catch |err| {
+fn processDb(ctx: Context, filters: model.DateFilters, consumer: provider.EventConsumer, db_path: []const u8) void {
+    std.Io.Dir.cwd().access(ctx.io, db_path, .{}) catch |err| {
         if (err == error.FileNotFound) {
             std.log.debug("crush: skipping missing db at {s}", .{db_path});
             return;
@@ -128,18 +121,21 @@ fn processDb(state: *const WorkState, temp_allocator: std.mem.Allocator, db_path
         return;
     };
 
-    const json_rows = runSqliteQuery(temp_allocator, state.io, db_path) catch |err| {
+    const json_rows = runSqliteQuery(ctx, db_path) catch |err| {
         std.log.info("crush: skipping {s}, sqlite3 query failed ({s})", .{ db_path, @errorName(err) });
         return;
     };
-    defer temp_allocator.free(json_rows);
+    defer ctx.temp_allocator.free(json_rows);
 
-    parseRows(state.io, state.shared_allocator, temp_allocator, state.filters, state.consumer, json_rows) catch |err| {
+    parseRows(ctx, filters, consumer, json_rows) catch |err| {
         std.log.warn("crush: failed to parse sqlite output from {s} ({s})", .{ db_path, @errorName(err) });
     };
 }
 
-fn findCrushDbPaths(allocator: std.mem.Allocator, temp_allocator: std.mem.Allocator, io: std.Io) !std.ArrayList([]u8) {
+fn findCrushDbPaths(ctx: Context) !std.ArrayList([]u8) {
+    const allocator = ctx.allocator;
+    const temp_allocator = ctx.temp_allocator;
+    const io = ctx.io;
     var list = std.ArrayList([]u8).empty;
     errdefer {
         for (list.items) |p| allocator.free(p);
@@ -211,7 +207,7 @@ test "crush parses sqlite output fixture" {
     try testing.expect(count > 0);
 }
 
-fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8) ![]u8 {
+fn runSqliteQuery(ctx: Context, db_path: []const u8) ![]u8 {
     // Query to get sessions with usage, joining messages to find the model.
     // We prioritize messages that have a non-empty model.
     const query =
@@ -226,8 +222,9 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
     ;
     var argv = [_][]const u8{ "sqlite3", "-json", db_path, query };
 
-    var result = std.process.Child.run(allocator, io, .{
-        .argv = &argv,
+    var result = std.process.run(ctx.temp_allocator, ctx.io, .{
+        .argv = argv[0..],
+        .environ_map = ctx.environ_map,
         .max_output_bytes = 64 * 1024 * 1024,
     }) catch |err| {
         if (err == error.FileNotFound) {
@@ -235,10 +232,10 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
         }
         return err;
     };
-    defer allocator.free(result.stderr);
+    defer ctx.temp_allocator.free(result.stderr);
 
     const exit_code: u8 = switch (result.term) {
-        .Exited => |code| code,
+        .exited => |code| code,
         else => 255,
     };
     if (exit_code != 0) {
@@ -247,63 +244,49 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
         } else {
             std.log.warn("crush: sqlite3 exited with code {d}: {s}", .{ exit_code, result.stderr });
         }
-        allocator.free(result.stdout);
+        ctx.temp_allocator.free(result.stdout);
         return error.SqliteFailed;
     }
 
     return result.stdout;
 }
 
-fn parseRows(
-    io: std.Io,
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
-    filters: model.DateFilters,
-    consumer: provider.EventConsumer,
-    json_payload: []const u8,
-) !void {
-    var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, json_payload, .{});
+fn parseRows(ctx: Context, filters: model.DateFilters, consumer: provider.EventConsumer, json_payload: []const u8) !void {
+    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.temp_allocator, json_payload, .{});
     defer parsed.deinit();
     switch (parsed.value) {
         .array => |rows| {
             for (rows.items) |row_value| {
-                try parseRow(io, shared_allocator, temp_allocator, filters, consumer, row_value);
+                try parseRow(ctx, filters, consumer, row_value);
             }
         },
         else => return error.InvalidJson,
     }
 }
 
-fn parseRow(
-    io: std.Io,
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
-    filters: model.DateFilters,
-    consumer: provider.EventConsumer,
-    row_value: std.json.Value,
-) !void {
+fn parseRow(ctx: Context, filters: model.DateFilters, consumer: provider.EventConsumer, row_value: std.json.Value) !void {
     const obj = switch (row_value) {
         .object => |o| o,
         else => return,
     };
 
-    const session_id = try getObjectString(shared_allocator, obj, "id") orelse return;
-    defer shared_allocator.free(session_id);
+    const session_id = try getObjectString(ctx.allocator, obj, "id") orelse return;
+    defer ctx.allocator.free(session_id);
 
-    const timestamp_str = try getObjectString(temp_allocator, obj, "timestamp") orelse return;
-    defer temp_allocator.free(timestamp_str);
+    const timestamp_str = try getObjectString(ctx.temp_allocator, obj, "timestamp") orelse return;
+    defer ctx.temp_allocator.free(timestamp_str);
 
-    const model_name_owned = try getObjectString(shared_allocator, obj, "model");
+    const model_name_owned = try getObjectString(ctx.allocator, obj, "model");
     const model_name = model_name_owned orelse "unknown";
-    defer if (model_name_owned) |m| shared_allocator.free(m);
+    defer if (model_name_owned) |m| ctx.allocator.free(m);
 
     const prompt_tokens = getObjectU64(obj, "prompt_tokens");
     const completion_tokens = getObjectU64(obj, "completion_tokens");
 
     if (prompt_tokens == 0 and completion_tokens == 0) return;
 
-    const timestamp_info = (try provider.timestampFromSlice(shared_allocator, timestamp_str, filters.timezone_offset_minutes)) orelse return;
-    defer shared_allocator.free(timestamp_info.text);
+    const timestamp_info = (try provider.timestampFromSlice(ctx.allocator, timestamp_str, filters.timezone_offset_minutes)) orelse return;
+    defer ctx.allocator.free(timestamp_info.text);
 
     const usage = model.TokenUsage{
         .input_tokens = prompt_tokens,
@@ -321,9 +304,9 @@ fn parseRow(
         .display_input_tokens = prompt_tokens,
     };
 
-    if (consumer.mutex) |m| try m.lock(io);
-    defer if (consumer.mutex) |m| m.unlock(io);
-    try consumer.ingest(consumer.context, shared_allocator, &event, filters);
+    if (consumer.mutex) |m| try m.lock(ctx.io);
+    defer if (consumer.mutex) |m| m.unlock(ctx.io);
+    try consumer.ingest(consumer.context, ctx.allocator, &event, filters);
 }
 
 fn getObjectString(allocator: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) !?[]u8 {

@@ -72,13 +72,13 @@ const option_specs = [_]OptionSpec{
 
 threadlocal var provider_desc_buffer: [256]u8 = undefined;
 
-pub fn parseOptions(allocator: std.mem.Allocator) CliError!CliOptions {
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+pub fn parseOptions(allocator: std.mem.Allocator, args: std.process.Args) CliError!CliOptions {
+    var it = std.process.Args.Iterator.initAllocator(args, allocator) catch return error.OutOfMemory;
+    defer it.deinit();
 
-    _ = args.skip(); // program name
+    _ = it.skip(); // program name
 
-    return parseOptionsIterator(&args);
+    return parseOptionsIterator(&it);
 }
 
 fn parseOptionsIterator(args: anytype) CliError!CliOptions {
@@ -188,15 +188,15 @@ pub fn printVersion(io: std.Io, version: []const u8) !void {
     };
 }
 
-pub fn printAgentList(io: std.Io, allocator: std.mem.Allocator) !void {
-    var infos = try tokenuze.providerPathInfos(allocator);
+pub fn printAgentList(ctx: tokenuze.Context) !void {
+    var infos = try tokenuze.providerPathInfos(ctx.allocator, ctx.environ_map);
     defer {
-        for (infos.items) |info| allocator.free(info.path);
-        infos.deinit(allocator);
+        for (infos.items) |info| ctx.allocator.free(info.path);
+        infos.deinit(ctx.allocator);
     }
 
     var buffer: [1024]u8 = undefined;
-    var stdout = std.Io.File.stdout().writer(io, buffer[0..]);
+    var stdout = std.Io.File.stdout().writer(ctx.io, buffer[0..]);
     const writer = &stdout.interface;
     try writer.print("Supported agents:\n", .{});
     for (infos.items) |info| {
@@ -325,7 +325,11 @@ fn missingValueError(name: []const u8) CliError {
     return cliError("missing value for --{s}", .{name});
 }
 
-fn optionDescription(spec: *const OptionSpec, tz_label: []const u8, buffer: []u8) []const u8 {
+fn optionDescription(
+    spec: *const OptionSpec,
+    tz_label: []const u8,
+    buffer: []u8,
+) []const u8 {
     return switch (spec.id) {
         .tz => std.fmt.bufPrint(
             buffer,
@@ -341,7 +345,12 @@ fn optionDescription(spec: *const OptionSpec, tz_label: []const u8, buffer: []u8
     };
 }
 
-fn printOptionLine(writer: anytype, spec: *const OptionSpec, desc: []const u8, max_label: usize) !void {
+fn printOptionLine(
+    writer: *std.Io.Writer,
+    spec: *const OptionSpec,
+    desc: []const u8,
+    max_label: usize,
+) !void {
     try writer.writeAll("  ");
     try writeOptionLabel(writer, spec);
     const label_len = optionLabelLength(spec);
@@ -350,7 +359,7 @@ fn printOptionLine(writer: anytype, spec: *const OptionSpec, desc: []const u8, m
     try writer.print("  {s}\n", .{desc});
 }
 
-fn writeOptionLabel(writer: anytype, spec: *const OptionSpec) !void {
+fn writeOptionLabel(writer: *std.Io.Writer, spec: *const OptionSpec) !void {
     if (spec.short_name) |short| {
         try writer.print("-{c}", .{short});
         if (spec.long_name.len != 0) {

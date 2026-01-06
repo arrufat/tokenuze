@@ -3,6 +3,7 @@ const testing = std.testing;
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 
+const Context = @import("../Context.zig");
 const model = @import("../model.zig");
 const UsageAccumulator = model.UsageAccumulator;
 const usageFieldForKey = model.usageFieldForKey;
@@ -13,15 +14,9 @@ const test_helpers = @import("test_helpers.zig");
 const linux_parts = [_][]const u8{ ".local", "share", "zed", "threads", "threads.db" };
 const mac_parts = [_][]const u8{ "Library", "Application Support", "Zed", "threads", "threads.db" };
 const windows_parts = [_][]const u8{ "Zed", "threads", "threads.db" };
-const parse_ctx = provider.ParseContext{
-    .provider_name = "zed",
-    .legacy_fallback_model = null,
-    .cached_counts_overlap_input = false,
-};
 
 pub fn collect(
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     summaries: *model.SummaryBuilder,
     filters: model.DateFilters,
     progress: ?std.Progress.Node,
@@ -36,40 +31,35 @@ pub fn collect(
         .mutex = &builder_mutex,
         .ingest = struct {
             fn ingest(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, event: *const model.TokenUsageEvent, f: model.DateFilters) model.IngestError!void {
-                const ctx: *@TypeOf(summary_ctx) = @ptrCast(@alignCast(ctx_ptr));
-                try ctx.builder.ingest(allocator, event, f);
+                const summary: *@TypeOf(summary_ctx) = @ptrCast(@alignCast(ctx_ptr));
+                try summary.builder.ingest(allocator, event, f);
             }
         }.ingest,
     };
 
-    try streamEvents(shared_allocator, temp_allocator, filters, consumer, progress);
+    try streamEvents(ctx, filters, consumer, progress);
 }
 
 pub fn streamEvents(
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
     _ = progress;
-    const db_path = resolveDbPath(shared_allocator) catch |err| {
+    const db_path = resolveDbPath(ctx) catch |err| {
         std.log.info("zed: skipping, unable to resolve db path ({s})", .{@errorName(err)});
         return;
     };
-    defer shared_allocator.free(db_path);
+    defer ctx.allocator.free(db_path);
 
-    var io_single: std.Io.Threaded = .init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
-    const json_rows = runSqliteQuery(temp_allocator, io, db_path) catch |err| {
+    const json_rows = runSqliteQuery(ctx, db_path) catch |err| {
         std.log.info("zed: skipping, sqlite3 query failed ({s})", .{@errorName(err)});
         return;
     };
-    defer temp_allocator.free(json_rows);
+    defer ctx.temp_allocator.free(json_rows);
 
-    parseRows(io, shared_allocator, temp_allocator, filters, consumer, json_rows) catch |err| {
+    parseRows(ctx, filters, consumer, json_rows) catch |err| {
         std.log.warn("zed: failed to parse sqlite output ({s})", .{@errorName(err)});
     };
 }
@@ -79,25 +69,23 @@ pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.Pric
     _ = pricing;
 }
 
-pub fn pathHint(allocator: std.mem.Allocator) ![]u8 {
-    return resolveDbPath(allocator);
+pub fn pathHint(ctx: Context) ![]u8 {
+    return resolveDbPath(ctx);
 }
 
-fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
+fn resolveDbPath(ctx: Context) ![]u8 {
     const os_tag = builtin.target.os.tag;
     switch (os_tag) {
         .windows => {
-            const local_app_data = std.process.getEnvVarOwned(allocator, "LOCALAPPDATA") catch return error.MissingLocalAppData;
-            defer allocator.free(local_app_data);
+            const local_app_data = ctx.environ_map.get("LOCALAPPDATA") orelse return error.MissingLocalAppData;
 
             var parts: [windows_parts.len + 1][]const u8 = undefined;
             parts[0] = local_app_data;
             for (windows_parts, 0..) |p, i| parts[i + 1] = p;
-            return std.fs.path.join(allocator, &parts);
+            return std.fs.path.join(ctx.allocator, &parts);
         },
         .macos, .linux => {
-            const home = std.process.getEnvVarOwned(allocator, "HOME") catch return error.MissingHome;
-            defer allocator.free(home);
+            const home = ctx.environ_map.get("HOME") orelse return error.MissingHome;
 
             const sub_parts = if (os_tag == .macos) &mac_parts else &linux_parts;
             comptime assert(mac_parts.len == linux_parts.len);
@@ -105,18 +93,19 @@ fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
             var parts: [mac_parts.len + 1][]const u8 = undefined;
             parts[0] = home;
             for (sub_parts, 0..) |p, i| parts[i + 1] = p;
-            return std.fs.path.join(allocator, &parts);
+            return std.fs.path.join(ctx.allocator, &parts);
         },
         else => @compileError("zed provider does not support this OS"),
     }
 }
 
-fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8) ![]u8 {
+fn runSqliteQuery(ctx: Context, db_path: []const u8) ![]u8 {
     const query = "select id, updated_at, data_type, hex(data) as data_hex from threads";
     var argv = [_][]const u8{ "sqlite3", "-json", db_path, query };
 
-    var result = std.process.Child.run(allocator, io, .{
-        .argv = &argv,
+    var result = std.process.run(ctx.temp_allocator, ctx.io, .{
+        .argv = argv[0..],
+        .environ_map = ctx.environ_map,
         .max_output_bytes = 64 * 1024 * 1024,
     }) catch |err| {
         if (err == error.FileNotFound) {
@@ -124,10 +113,10 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
         }
         return err;
     };
-    defer allocator.free(result.stderr);
+    defer ctx.temp_allocator.free(result.stderr);
 
     const exit_code: u8 = switch (result.term) {
-        .Exited => |code| code,
+        .exited => |code| code,
         else => 255,
     };
     if (exit_code != 0) {
@@ -136,79 +125,65 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
         } else {
             std.log.warn("zed: sqlite3 exited with code {d}: {s}", .{ exit_code, result.stderr });
         }
-        allocator.free(result.stdout);
+        ctx.temp_allocator.free(result.stdout);
         return error.SqliteFailed;
     }
 
     return result.stdout;
 }
 
-fn parseRows(
-    io: std.Io,
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
-    filters: model.DateFilters,
-    consumer: provider.EventConsumer,
-    json_payload: []const u8,
-) !void {
-    var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, json_payload, .{});
+fn parseRows(ctx: Context, filters: model.DateFilters, consumer: provider.EventConsumer, json_payload: []const u8) !void {
+    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.temp_allocator, json_payload, .{});
     defer parsed.deinit();
     switch (parsed.value) {
         .array => |rows| {
             for (rows.items) |row_value| {
-                try parseRow(io, shared_allocator, temp_allocator, filters, consumer, row_value);
+                try parseRow(ctx, filters, consumer, row_value);
             }
         },
         else => return error.InvalidJson,
     }
 }
 
-fn parseRow(
-    io: std.Io,
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
-    filters: model.DateFilters,
-    consumer: provider.EventConsumer,
-    row_value: std.json.Value,
-) !void {
+fn parseRow(ctx: Context, filters: model.DateFilters, consumer: provider.EventConsumer, row_value: std.json.Value) !void {
     const obj = switch (row_value) {
         .object => |o| o,
         else => return,
     };
 
-    const thread_id = try getObjectString(shared_allocator, obj, "id") orelse return;
-    defer shared_allocator.free(thread_id);
+    const thread_id = try getObjectString(ctx.allocator, obj, "id") orelse return;
+    defer ctx.allocator.free(thread_id);
 
-    const updated_at = try getObjectString(shared_allocator, obj, "updated_at") orelse return;
-    defer shared_allocator.free(updated_at);
+    const updated_at = try getObjectString(ctx.allocator, obj, "updated_at") orelse return;
+    defer ctx.allocator.free(updated_at);
 
-    const data_type_owned = try getObjectString(temp_allocator, obj, "data_type");
+    const data_type_owned = try getObjectString(ctx.temp_allocator, obj, "data_type");
     const data_type = data_type_owned orelse "zstd";
-    defer if (data_type_owned) |dt| temp_allocator.free(dt);
+    defer if (data_type_owned) |dt| ctx.temp_allocator.free(dt);
 
-    const data_hex = try getObjectString(temp_allocator, obj, "data_hex") orelse return;
-    defer temp_allocator.free(data_hex);
+    const data_hex = try getObjectString(ctx.temp_allocator, obj, "data_hex") orelse return;
+    defer ctx.temp_allocator.free(data_hex);
 
     const blob_len = data_hex.len / 2;
     if (data_hex.len % 2 != 0) {
         std.log.warn("zed: invalid hex length for thread {s} (len={d})", .{ thread_id, data_hex.len });
         return;
     }
-    const blob = try temp_allocator.alloc(u8, blob_len);
-    errdefer temp_allocator.free(blob);
+    const blob = try ctx.temp_allocator.alloc(u8, blob_len);
+    errdefer ctx.temp_allocator.free(blob);
     _ = std.fmt.hexToBytes(blob, data_hex) catch |err| {
         std.log.warn("zed: invalid hex data for thread {s} ({s})", .{ thread_id, @errorName(err) });
         return;
     };
-    defer temp_allocator.free(blob);
+    defer ctx.temp_allocator.free(blob);
 
-    const json_data = decompressIfNeeded(shared_allocator, blob, data_type) catch |err| {
+    const json_data = decompressIfNeeded(ctx.allocator, blob, data_type) catch |err| {
         std.log.warn("zed: decompress failed ({s})", .{@errorName(err)});
         return;
     };
-    defer shared_allocator.free(json_data);
+    defer ctx.allocator.free(json_data);
 
-    parseThread(io, shared_allocator, temp_allocator, filters, consumer, thread_id, updated_at, json_data) catch |err| {
+    parseThread(ctx, filters, consumer, thread_id, updated_at, json_data) catch |err| {
         std.log.warn("zed: parse thread failed ({s})", .{@errorName(err)});
     };
 }
@@ -255,16 +230,14 @@ fn decompressZstd(allocator: std.mem.Allocator, blob: []const u8) ![]u8 {
 }
 
 fn parseThread(
-    io: std.Io,
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
     thread_id: []const u8,
     updated_at: []const u8,
     json_bytes: []const u8,
 ) !void {
-    var parsed = try std.json.parseFromSlice(std.json.Value, temp_allocator, json_bytes, .{});
+    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.temp_allocator, json_bytes, .{});
     defer parsed.deinit();
 
     const root = parsed.value;
@@ -274,13 +247,13 @@ fn parseThread(
     };
 
     var model_name: ?[]const u8 = null;
-    defer if (model_name) |m| shared_allocator.free(m);
+    defer if (model_name) |m| ctx.allocator.free(m);
     if (obj.get("model")) |model_val| {
-        model_name = try parseModelValue(shared_allocator, model_val);
+        model_name = try parseModelValue(ctx.allocator, model_val);
     }
 
     if (obj.get("request_token_usage")) |usage_val| {
-        try parseRequestUsageValue(io, shared_allocator, temp_allocator, filters, consumer, usage_val, thread_id, updated_at, model_name);
+        try parseRequestUsageValue(ctx, filters, consumer, usage_val, thread_id, updated_at, model_name);
     }
 }
 
@@ -301,9 +274,7 @@ fn parseModelValue(allocator: std.mem.Allocator, val: std.json.Value) !?[]u8 {
 }
 
 fn parseRequestUsageValue(
-    io: std.Io,
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
     val: std.json.Value,
@@ -315,20 +286,18 @@ fn parseRequestUsageValue(
         .object => |o| o,
         else => return,
     };
-    const timestamp_info = (try provider.timestampFromSlice(shared_allocator, updated_at, filters.timezone_offset_minutes)) orelse return;
-    defer shared_allocator.free(timestamp_info.text);
+    const timestamp_info = (try provider.timestampFromSlice(ctx.allocator, updated_at, filters.timezone_offset_minutes)) orelse return;
+    defer ctx.allocator.free(timestamp_info.text);
 
     var it = obj.iterator();
     while (it.next()) |entry| {
         const req_id = entry.key_ptr.*;
-        try parseUsageEntryValue(io, shared_allocator, temp_allocator, filters, consumer, req_id, entry.value_ptr.*, thread_id, timestamp_info, model_name);
+        try parseUsageEntryValue(ctx, filters, consumer, req_id, entry.value_ptr.*, thread_id, timestamp_info, model_name);
     }
 }
 
 fn parseUsageEntryValue(
-    io: std.Io,
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
     req_id: []const u8,
@@ -337,7 +306,6 @@ fn parseUsageEntryValue(
     timestamp_info: provider.TimestampInfo,
     model_name: ?[]const u8,
 ) !void {
-    _ = temp_allocator;
     const obj = switch (usage_val) {
         .object => |o| o,
         else => return,
@@ -372,7 +340,7 @@ fn parseUsageEntryValue(
         .display_input_tokens = provider.ParseContext.computeDisplayInput(usage),
     };
 
-    if (consumer.mutex) |m| try m.lock(io);
-    defer if (consumer.mutex) |m| m.unlock(io);
-    try consumer.ingest(consumer.context, shared_allocator, &event, filters);
+    if (consumer.mutex) |m| try m.lock(ctx.io);
+    defer if (consumer.mutex) |m| m.unlock(ctx.io);
+    try consumer.ingest(consumer.context, ctx.allocator, &event, filters);
 }

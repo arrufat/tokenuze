@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const Context = @import("../Context.zig");
 const model = @import("../model.zig");
 const provider = @import("provider.zig");
 
@@ -38,9 +39,7 @@ pub fn runFixtureParse(
     allocator: std.mem.Allocator,
     fixture_path: []const u8,
     parse_fn: fn (
-        std.Io,
-        std.mem.Allocator,
-        std.mem.Allocator,
+        Context,
         model.DateFilters,
         provider.EventConsumer,
         []const u8,
@@ -63,6 +62,15 @@ pub fn runFixtureParse(
 
     const consumer = makeCapturingConsumer(&events);
 
-    try parse_fn(io, allocator, allocator, .{}, consumer, json_payload);
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    const ctx = Context{
+        .allocator = allocator,
+        .temp_allocator = allocator,
+        .io = io,
+        .environ_map = &environ_map,
+    };
+
+    try parse_fn(ctx, .{}, consumer, json_payload);
     return events.items.len;
 }

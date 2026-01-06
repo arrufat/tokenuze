@@ -101,12 +101,12 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
     _ = b.runAllowFail(
         &.{ "git", "-C", repo_dir, "describe", "--tags", "--exact-match" },
         &code,
-        .Ignore,
+        .ignore,
     ) catch {
         const git_hash_raw = b.runAllowFail(
             &.{ "git", "-C", repo_dir, "rev-parse", "--short", "HEAD" },
             &code,
-            .Ignore,
+            .ignore,
         ) catch return tokenuze_version;
         const commit_hash = std.mem.trim(u8, git_hash_raw, " \n\r");
 
@@ -114,12 +114,12 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
             const base_tag_raw = b.runAllowFail(
                 &.{ "git", "-C", repo_dir, "describe", "--tags", "--match=*.0", "--abbrev=0" },
                 &code,
-                .Ignore,
+                .ignore,
             ) catch {
                 const git_count_raw = b.runAllowFail(
                     &.{ "git", "-C", repo_dir, "rev-list", "--count", "HEAD" },
                     &code,
-                    .Ignore,
+                    .ignore,
                 ) catch return tokenuze_version;
                 break :blk std.mem.trim(u8, git_count_raw, " \n\r");
             };
@@ -129,7 +129,7 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
             const git_count_raw = b.runAllowFail(
                 &.{ "git", "-C", repo_dir, "rev-list", "--count", count_cmd },
                 &code,
-                .Ignore,
+                .ignore,
             ) catch return tokenuze_version;
             break :blk std.mem.trim(u8, git_count_raw, " \n\r");
         };
