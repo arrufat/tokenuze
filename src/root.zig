@@ -55,6 +55,8 @@ pub fn logFn(
 const CollectFn = *const fn (
     std.mem.Allocator,
     std.mem.Allocator,
+    std.Io,
+    *const std.process.Environ.Map,
     *model.SummaryBuilder,
     model.DateFilters,
     ?std.Progress.Node,
@@ -65,7 +67,7 @@ const LoadPricingFn = *const fn (
     *model.PricingMap,
 ) anyerror!void;
 
-const PathHintFn = *const fn (std.mem.Allocator) anyerror![]u8;
+const PathHintFn = *const fn (std.mem.Allocator, *const std.process.Environ.Map) anyerror![]u8;
 
 pub const ProviderSpec = struct {
     name: []const u8,
@@ -221,10 +223,16 @@ pub fn findProviderIndex(name: []const u8) ?usize {
     return null;
 }
 
-pub fn run(io: std.Io, allocator: std.mem.Allocator, filters: DateFilters, selection: ProviderSelection) !void {
+pub fn run(
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
+    allocator: std.mem.Allocator,
+    filters: DateFilters,
+    selection: ProviderSelection,
+) !void {
     const enable_progress = std.Io.File.stdout().isTty(io) catch false;
     logRunStart(filters, selection, enable_progress);
-    var summary = try collectSummary(io, allocator, filters, selection, enable_progress);
+    var summary = try collectSummary(io, environ_map, allocator, filters, selection, enable_progress);
     defer summary.deinit(allocator);
 
     var stdout_buffer: [4096]u8 = undefined;
@@ -237,12 +245,17 @@ pub fn run(io: std.Io, allocator: std.mem.Allocator, filters: DateFilters, selec
     try flushOutput(out_writer);
 }
 
-pub fn renderSummaryAlloc(allocator: std.mem.Allocator, filters: DateFilters, selection: ProviderSelection) ![]u8 {
+pub fn renderSummaryAlloc(
+    allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+    filters: DateFilters,
+    selection: ProviderSelection,
+) ![]u8 {
     var io_single = std.Io.Threaded.init_single_threaded;
     defer io_single.deinit();
     const io = io_single.io();
 
-    var summary = try collectSummaryInternal(io, allocator, filters, selection, false, null, null);
+    var summary = try collectSummaryInternal(io, environ_map, allocator, filters, selection, false, null, null);
     defer summary.deinit(allocator);
     return try renderSummaryBuffer(allocator, summary.builder.items(), &summary.totals, filters.pretty_output);
 }
@@ -258,28 +271,34 @@ pub fn renderSessionsTable(
 
 pub fn renderSessionsAlloc(
     allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     filters: DateFilters,
     selection: ProviderSelection,
     pretty: bool,
 ) ![]u8 {
     var cache = PricingCache.init(allocator);
     defer cache.deinit(allocator);
-    return try renderSessionsWithCache(allocator, filters, selection, pretty, &cache);
+    return try renderSessionsWithCache(allocator, io, environ_map, filters, selection, pretty, &cache);
 }
 
 pub fn renderSessionsWithCache(
     allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     filters: DateFilters,
     selection: ProviderSelection,
     pretty: bool,
     cache: *PricingCache,
 ) ![]u8 {
-    var recorder = try collectSessionsWithCache(allocator, filters, selection, cache);
+    var recorder = try collectSessionsWithCache(io, environ_map, allocator, filters, selection, cache);
     defer recorder.deinit(allocator);
     return recorder.renderJson(allocator, pretty);
 }
 
 pub fn collectSessionsWithCache(
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     allocator: std.mem.Allocator,
     filters: DateFilters,
     selection: ProviderSelection,
@@ -288,11 +307,7 @@ pub fn collectSessionsWithCache(
     var recorder = model.SessionRecorder.init(allocator);
     errdefer recorder.deinit(allocator);
 
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
-    var summary = try collectSummaryInternal(io, allocator, filters, selection, false, &recorder, cache);
+    var summary = try collectSummaryInternal(io, environ_map, allocator, filters, selection, false, &recorder, cache);
     // Mirror the aggregated totals from the daily summary to keep --sessions output
     // in lockstep with the default summary, even if per-session pricing or
     // grouping would introduce tiny floating-point differences.
@@ -306,16 +321,20 @@ pub fn collectSessionsWithCache(
 
 pub fn collectUploadReport(
     allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     filters: DateFilters,
     selection: ProviderSelection,
 ) !UploadReport {
     var cache = PricingCache.init(allocator);
     defer cache.deinit(allocator);
-    return try collectUploadReportWithCache(allocator, filters, selection, &cache);
+    return try collectUploadReportWithCache(allocator, io, environ_map, filters, selection, &cache);
 }
 
 pub fn collectUploadReportWithCache(
     allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     filters: DateFilters,
     selection: ProviderSelection,
     cache: *PricingCache,
@@ -323,11 +342,7 @@ pub fn collectUploadReportWithCache(
     var recorder = model.SessionRecorder.init(allocator);
     defer recorder.deinit(allocator);
 
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
-    var summary = try collectSummaryInternal(io, allocator, filters, selection, false, &recorder, cache);
+    var summary = try collectSummaryInternal(io, environ_map, allocator, filters, selection, false, &recorder, cache);
     defer summary.deinit(allocator);
 
     const daily_json = try renderSummaryBuffer(allocator, summary.builder.items(), &summary.totals, filters.pretty_output);
@@ -404,7 +419,10 @@ pub const ProviderPathInfo = struct {
     path: []const u8,
 };
 
-pub fn providerPathInfos(allocator: std.mem.Allocator) !std.ArrayList(ProviderPathInfo) {
+pub fn providerPathInfos(
+    allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+) !std.ArrayList(ProviderPathInfo) {
     var list: std.ArrayList(ProviderPathInfo) = .empty;
     errdefer {
         for (list.items) |info| allocator.free(info.path);
@@ -412,7 +430,7 @@ pub fn providerPathInfos(allocator: std.mem.Allocator) !std.ArrayList(ProviderPa
     }
 
     for (providers) |spec| {
-        const resolved = spec.path_hint(allocator) catch |err| blk: {
+        const resolved = spec.path_hint(allocator, environ_map) catch |err| blk: {
             const note = try std.fmt.allocPrint(allocator, "unavailable: {s}", .{@errorName(err)});
             break :blk note;
         };
@@ -454,16 +472,18 @@ fn flushOutput(writer: anytype) !void {
 
 fn collectSummary(
     io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     allocator: std.mem.Allocator,
     filters: DateFilters,
     selection: ProviderSelection,
     enable_progress: bool,
 ) !SummaryResult {
-    return collectSummaryInternal(io, allocator, filters, selection, enable_progress, null, null);
+    return collectSummaryInternal(io, environ_map, allocator, filters, selection, enable_progress, null, null);
 }
 
 fn collectSummaryInternal(
     io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     allocator: std.mem.Allocator,
     filters: DateFilters,
     selection: ProviderSelection,
@@ -511,6 +531,8 @@ fn collectSummaryInternal(
     try collectSelectedProviders(
         allocator,
         temp_allocator,
+        io,
+        environ_map,
         filters,
         selection,
         &summary_builder,
@@ -535,6 +557,8 @@ fn collectSummaryInternal(
 fn collectSelectedProviders(
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     filters: DateFilters,
     selection: ProviderSelection,
     summary_builder: *model.SummaryBuilder,
@@ -553,7 +577,7 @@ fn collectSelectedProviders(
             var collect_timer = try std.time.Timer.start();
             const phase_node = startProgressNode(progress_parent, prov.phase_label, 0);
             defer finishProgressNode(phase_node);
-            try prov.collect(allocator, temp_allocator, summary_builder, filters, progressHandle(phase_node));
+            try prov.collect(allocator, temp_allocator, io, environ_map, summary_builder, filters, progressHandle(phase_node));
             break :blk .{
                 .elapsed = nsToMs(collect_timer.read()),
                 .events_added = summary_builder.eventCount() - before_events,

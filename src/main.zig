@@ -9,7 +9,7 @@ const cli = @import("cli.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const native_os = builtin.target.os.tag;
     const choice = blk: {
         if (native_os == .wasi) break :blk .{ .allocator = std.heap.wasm_allocator, .is_debug = false };
@@ -30,9 +30,7 @@ pub fn main() !void {
         },
         else => return err,
     };
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
+    const io = init.io;
 
     tokenuze.setLogLevel(options.log_level);
     if (options.show_help) {
@@ -44,11 +42,11 @@ pub fn main() !void {
         return;
     }
     if (options.list_agents) {
-        try cli.printAgentList(io, allocator);
+        try cli.printAgentList(io, allocator, init.environ_map);
         return;
     }
     if (options.machine_id) {
-        try printMachineId(io, allocator);
+        try printMachineId(io, allocator, init.environ_map);
         return;
     }
     if (options.upload) {
@@ -63,7 +61,7 @@ pub fn main() !void {
             if (!options.providers.includesIndex(idx)) continue;
             var single = tokenuze.ProviderSelection.initEmpty();
             single.includeIndex(idx);
-            var report = try tokenuze.collectUploadReportWithCache(allocator, options.filters, single, &pricing_cache);
+            var report = try tokenuze.collectUploadReportWithCache(allocator, io, init.environ_map, options.filters, single, &pricing_cache);
             const entry = tokenuze.uploader.ProviderUpload{
                 .name = provider.name,
                 .daily_summary = report.daily_json,
@@ -86,6 +84,8 @@ pub fn main() !void {
         };
         try tokenuze.uploader.run(
             allocator,
+            io,
+            init.environ_map,
             uploads.items,
             options.filters.timezone_offset_minutes,
         );
@@ -94,15 +94,15 @@ pub fn main() !void {
         }
     }
     if (options.sessions) {
-        try handleSessionsOutput(io, allocator, options);
+        try handleSessionsOutput(io, allocator, init.environ_map, options);
         return;
     }
 
-    try tokenuze.run(io, allocator, options.filters, options.providers);
+    try tokenuze.run(io, init.environ_map, allocator, options.filters, options.providers);
 }
 
-fn printMachineId(io: std.Io, allocator: std.mem.Allocator) !void {
-    const id = try tokenuze.machine_id.getMachineId(allocator);
+fn printMachineId(io: std.Io, allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map) !void {
+    const id = try tokenuze.machine_id.getMachineId(allocator, io, environ_map);
     var buffer: [256]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, buffer[0..]);
     const writer = &stdout.interface;
@@ -113,7 +113,12 @@ fn printMachineId(io: std.Io, allocator: std.mem.Allocator) !void {
     };
 }
 
-fn handleSessionsOutput(io: std.Io, allocator: std.mem.Allocator, options: cli.CliOptions) !void {
+fn handleSessionsOutput(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+    options: cli.CliOptions,
+) !void {
     var buffer: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, buffer[0..]);
     const writer = &stdout.interface;
@@ -122,6 +127,8 @@ fn handleSessionsOutput(io: std.Io, allocator: std.mem.Allocator, options: cli.C
     defer cache.deinit(allocator);
 
     var recorder = try tokenuze.collectSessionsWithCache(
+        io,
+        environ_map,
         allocator,
         options.filters,
         options.providers,

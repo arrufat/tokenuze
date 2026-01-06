@@ -1,14 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub fn getHostname(allocator: std.mem.Allocator) ![]u8 {
+pub fn getHostname(
+    allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+) ![]u8 {
     const host_vars = [_][]const u8{ "HOSTNAME", "COMPUTERNAME" };
     for (host_vars) |var_name| {
-        if (std.process.getEnvVarOwned(allocator, var_name)) |hostname| {
-            return hostname;
-        } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => continue,
-            else => return err,
+        if (environ_map.get(var_name)) |hostname| {
+            return allocator.dupe(u8, hostname);
         }
     }
 
@@ -23,14 +23,14 @@ pub fn getHostname(allocator: std.mem.Allocator) ![]u8 {
     }
 }
 
-pub fn getUsername(allocator: std.mem.Allocator) ![]u8 {
+pub fn getUsername(
+    allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+) ![]u8 {
     const user_vars = [_][]const u8{ "USER", "USERNAME" };
     for (user_vars) |var_name| {
-        if (std.process.getEnvVarOwned(allocator, var_name)) |username| {
-            return username;
-        } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => continue,
-            else => return err,
+        if (environ_map.get(var_name)) |username| {
+            return allocator.dupe(u8, username);
         }
     }
 

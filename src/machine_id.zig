@@ -12,22 +12,22 @@ pub const MachineIdSource = enum {
     hostname_user,
 };
 
-pub fn getMachineId(allocator: Allocator) ![16]u8 {
-    var io_single: Io.Threaded = .init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
-    if (try readCachedMachineId(allocator, io)) |cached| {
+pub fn getMachineId(
+    allocator: Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+) ![16]u8 {
+    if (try readCachedMachineId(allocator, io, environ_map)) |cached| {
         return cached;
     }
 
-    const generated = try generateMachineId(allocator, io);
-    try persistMachineId(allocator, io, generated);
+    const generated = try generateMachineId(allocator, io, environ_map);
+    try persistMachineId(allocator, io, environ_map, generated);
     return generated;
 }
 
-fn generateMachineId(allocator: Allocator, io: Io) ![16]u8 {
-    var unique = try selectUniqueIdentifier(allocator, io);
+fn generateMachineId(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map) ![16]u8 {
+    var unique = try selectUniqueIdentifier(allocator, io, environ_map);
     defer allocator.free(unique.value);
 
     return hashIdentifier(allocator, unique.value, unique.source);
@@ -38,7 +38,7 @@ const SelectedIdentifier = struct {
     source: MachineIdSource,
 };
 
-fn selectUniqueIdentifier(allocator: Allocator, io: Io) !SelectedIdentifier {
+fn selectUniqueIdentifier(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map) !SelectedIdentifier {
     if (try getHardwareUuid(allocator, io)) |uuid| {
         return .{ .value = uuid, .source = .hardware_uuid };
     }
@@ -51,12 +51,12 @@ fn selectUniqueIdentifier(allocator: Allocator, io: Io) !SelectedIdentifier {
         return .{ .value = mac, .source = .mac_address };
     }
 
-    const fallback = try getHostnameUserFallback(allocator);
+    const fallback = try getHostnameUserFallback(allocator, environ_map);
     return .{ .value = fallback, .source = .hostname_user };
 }
 
-fn readCachedMachineId(allocator: Allocator, io: Io) !?[16]u8 {
-    const cache_path = try cacheFilePath(allocator);
+fn readCachedMachineId(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map) !?[16]u8 {
+    const cache_path = try cacheFilePath(allocator, environ_map);
     defer allocator.free(cache_path);
 
     const file = Io.Dir.openFileAbsolute(io, cache_path, .{}) catch |err| switch (err) {
@@ -76,8 +76,8 @@ fn readCachedMachineId(allocator: Allocator, io: Io) !?[16]u8 {
     return id;
 }
 
-fn persistMachineId(allocator: Allocator, io: Io, id: [16]u8) !void {
-    const cache_dir = try cacheDir(allocator);
+fn persistMachineId(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map, id: [16]u8) !void {
+    const cache_dir = try cacheDir(allocator, environ_map);
     defer allocator.free(cache_dir);
 
     Io.Dir.createDirAbsolute(io, cache_dir, .default_dir) catch |err| switch (err) {
@@ -95,23 +95,20 @@ fn persistMachineId(allocator: Allocator, io: Io, id: [16]u8) !void {
     try file.writeStreamingAll(io, "\n");
 }
 
-fn cacheDir(allocator: Allocator) ![]u8 {
-    if (std.process.getEnvVarOwned(allocator, "HOME")) |home| {
-        defer allocator.free(home);
+fn cacheDir(allocator: Allocator, environ_map: *const std.process.Environ.Map) ![]u8 {
+    if (environ_map.get("HOME")) |home| {
         return std.fs.path.join(allocator, &.{ home, ".ccusage" });
-    } else |_| {
-        if (builtin.os.tag == .windows) {
-            if (std.process.getEnvVarOwned(allocator, "LOCALAPPDATA")) |app_data| {
-                defer allocator.free(app_data);
-                return std.fs.path.join(allocator, &.{ app_data, "ccusage" });
-            } else |_| {}
-        }
-        return error.HomeNotFound;
     }
+    if (builtin.os.tag == .windows) {
+        if (environ_map.get("LOCALAPPDATA")) |app_data| {
+            return std.fs.path.join(allocator, &.{ app_data, "ccusage" });
+        }
+    }
+    return error.HomeNotFound;
 }
 
-fn cacheFilePath(allocator: Allocator) ![]u8 {
-    const dir = try cacheDir(allocator);
+fn cacheFilePath(allocator: Allocator, environ_map: *const std.process.Environ.Map) ![]u8 {
+    const dir = try cacheDir(allocator, environ_map);
     defer allocator.free(dir);
     return std.fs.path.join(allocator, &.{ dir, "machine_id" });
 }
@@ -119,14 +116,14 @@ fn cacheFilePath(allocator: Allocator) ![]u8 {
 fn getHardwareUuid(allocator: Allocator, io: Io) !?[]u8 {
     if (builtin.os.tag != .macos) return null;
 
-    const result = std.process.Child.run(allocator, io, .{
+    const result = std.process.run(allocator, io, .{
         .argv = &.{ "/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice" },
     }) catch return null;
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) return null;
         },
         else => return null,
@@ -196,14 +193,14 @@ fn parseMacFromCommand(
     argv: []const []const u8,
     needle: []const u8,
 ) !?[]u8 {
-    const result = std.process.Child.run(allocator, io, .{
+    const result = std.process.run(allocator, io, .{
         .argv = argv,
     }) catch return null;
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) return null;
         },
         else => return null,
@@ -232,11 +229,11 @@ fn lowercaseInPlace(bytes: []u8) void {
     }
 }
 
-fn getHostnameUserFallback(allocator: Allocator) ![]u8 {
-    const hostname = try identity.getHostname(allocator);
+fn getHostnameUserFallback(allocator: Allocator, environ_map: *const std.process.Environ.Map) ![]u8 {
+    const hostname = try identity.getHostname(allocator, environ_map);
     defer allocator.free(hostname);
 
-    const username = try identity.getUsername(allocator);
+    const username = try identity.getUsername(allocator, environ_map);
     defer allocator.free(username);
 
     return std.fmt.allocPrint(allocator, "{s}:{s}", .{ hostname, username });

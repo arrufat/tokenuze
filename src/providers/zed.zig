@@ -22,6 +22,8 @@ const parse_ctx = provider.ParseContext{
 pub fn collect(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     summaries: *model.SummaryBuilder,
     filters: model.DateFilters,
     progress: ?std.Progress.Node,
@@ -42,28 +44,26 @@ pub fn collect(
         }.ingest,
     };
 
-    try streamEvents(shared_allocator, temp_allocator, filters, consumer, progress);
+    try streamEvents(shared_allocator, temp_allocator, io, environ_map, filters, consumer, progress);
 }
 
 pub fn streamEvents(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
     _ = progress;
-    const db_path = resolveDbPath(shared_allocator) catch |err| {
+    const db_path = resolveDbPath(shared_allocator, environ_map) catch |err| {
         std.log.info("zed: skipping, unable to resolve db path ({s})", .{@errorName(err)});
         return;
     };
     defer shared_allocator.free(db_path);
 
-    var io_single: std.Io.Threaded = .init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
-
-    const json_rows = runSqliteQuery(temp_allocator, io, db_path) catch |err| {
+    const json_rows = runSqliteQuery(temp_allocator, io, environ_map, db_path) catch |err| {
         std.log.info("zed: skipping, sqlite3 query failed ({s})", .{@errorName(err)});
         return;
     };
@@ -79,16 +79,15 @@ pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.Pric
     _ = pricing;
 }
 
-pub fn pathHint(allocator: std.mem.Allocator) ![]u8 {
-    return resolveDbPath(allocator);
+pub fn pathHint(allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map) ![]u8 {
+    return resolveDbPath(allocator, environ_map);
 }
 
-fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
+fn resolveDbPath(allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map) ![]u8 {
     const os_tag = builtin.target.os.tag;
     switch (os_tag) {
         .windows => {
-            const local_app_data = std.process.getEnvVarOwned(allocator, "LOCALAPPDATA") catch return error.MissingLocalAppData;
-            defer allocator.free(local_app_data);
+            const local_app_data = environ_map.get("LOCALAPPDATA") orelse return error.MissingLocalAppData;
 
             var parts: [windows_parts.len + 1][]const u8 = undefined;
             parts[0] = local_app_data;
@@ -96,8 +95,7 @@ fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
             return std.fs.path.join(allocator, &parts);
         },
         .macos, .linux => {
-            const home = std.process.getEnvVarOwned(allocator, "HOME") catch return error.MissingHome;
-            defer allocator.free(home);
+            const home = environ_map.get("HOME") orelse return error.MissingHome;
 
             const sub_parts = if (os_tag == .macos) &mac_parts else &linux_parts;
             comptime assert(mac_parts.len == linux_parts.len);
@@ -111,12 +109,18 @@ fn resolveDbPath(allocator: std.mem.Allocator) ![]u8 {
     }
 }
 
-fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8) ![]u8 {
+fn runSqliteQuery(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
+    db_path: []const u8,
+) ![]u8 {
     const query = "select id, updated_at, data_type, hex(data) as data_hex from threads";
     var argv = [_][]const u8{ "sqlite3", "-json", db_path, query };
 
-    var result = std.process.Child.run(allocator, io, .{
-        .argv = &argv,
+    var result = std.process.run(allocator, io, .{
+        .argv = argv[0..],
+        .environ_map = environ_map,
         .max_output_bytes = 64 * 1024 * 1024,
     }) catch |err| {
         if (err == error.FileNotFound) {
@@ -127,7 +131,7 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
     defer allocator.free(result.stderr);
 
     const exit_code: u8 = switch (result.term) {
-        .Exited => |code| code,
+        .exited => |code| code,
         else => 255,
     };
     if (exit_code != 0) {

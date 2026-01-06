@@ -1063,6 +1063,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         pub fn collect(
             shared_allocator: std.mem.Allocator,
             temp_allocator: std.mem.Allocator,
+            io: std.Io,
+            environ_map: *const std.process.Environ.Map,
             summaries: *model.SummaryBuilder,
             filters: model.DateFilters,
             progress: ?std.Progress.Node,
@@ -1084,7 +1086,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .mutex = &builder_mutex,
                 .ingest = summaryIngest,
             };
-            try collectEvents(shared_allocator, temp_allocator, filters, consumer, events_progress);
+            try collectEvents(shared_allocator, temp_allocator, io, environ_map, filters, consumer, events_progress);
             const after_events = summaries.eventCount();
             if (events_progress) |node| std.Progress.Node.end(node);
             std.log.debug(
@@ -1101,10 +1103,12 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         pub fn streamEvents(
             shared_allocator: std.mem.Allocator,
             temp_allocator: std.mem.Allocator,
+            io: std.Io,
+            environ_map: *const std.process.Environ.Map,
             filters: model.DateFilters,
             consumer: EventConsumer,
         ) !void {
-            try collectEvents(shared_allocator, temp_allocator, filters, consumer, null);
+            try collectEvents(shared_allocator, temp_allocator, io, environ_map, filters, consumer, null);
         }
 
         pub fn loadPricingData(
@@ -1118,8 +1122,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
         }
 
-        pub fn sessionsPath(allocator: std.mem.Allocator) ![]u8 {
-            return resolveSessionsDir(allocator);
+        pub fn sessionsPath(
+            allocator: std.mem.Allocator,
+            environ_map: *const std.process.Environ.Map,
+        ) ![]u8 {
+            return resolveSessionsDir(allocator, environ_map);
         }
 
         fn logSessionWarning(file_path: []const u8, message: []const u8, err: anyerror) void {
@@ -1132,6 +1139,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         fn collectEvents(
             shared_allocator: std.mem.Allocator,
             temp_allocator: std.mem.Allocator,
+            io: std.Io,
+            environ_map: *const std.process.Environ.Map,
             filters: model.DateFilters,
             consumer: EventConsumer,
             progress: ?std.Progress.Node,
@@ -1150,15 +1159,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             var timer = try std.time.Timer.start();
 
-            const sessions_dir = resolveSessionsDir(shared_allocator) catch |err| {
+            const sessions_dir = resolveSessionsDir(shared_allocator, environ_map) catch |err| {
                 std.log.info("{s}.collectEvents: skipping, unable to resolve sessions dir ({s})", .{ provider_name, @errorName(err) });
                 return;
             };
             defer shared_allocator.free(sessions_dir);
-
-            var threaded = std.Io.Threaded.init(shared_allocator, .{});
-            defer threaded.deinit();
-            const io = threaded.io();
 
             var root_dir = std.Io.Dir.openDirAbsolute(io, sessions_dir, .{ .iterate = true }) catch |err| {
                 std.log.info(
@@ -1327,9 +1332,11 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             );
         }
 
-        fn resolveSessionsDir(allocator: std.mem.Allocator) ![]u8 {
-            const home = try std.process.getEnvVarOwned(allocator, "HOME");
-            defer allocator.free(home);
+        fn resolveSessionsDir(
+            allocator: std.mem.Allocator,
+            environ_map: *const std.process.Environ.Map,
+        ) ![]u8 {
+            const home = environ_map.get("HOME") orelse return error.HomeNotFound;
             return std.fmt.allocPrint(allocator, "{s}{s}", .{ home, sessions_dir_suffix });
         }
 

@@ -24,18 +24,20 @@ const UploadError = error{
 
 pub fn run(
     allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     providers: []const ProviderUpload,
     timezone_offset_minutes: i32,
 ) !void {
-    var env = try EnvConfig.load(allocator);
-    defer env.deinit(allocator);
+    var env_cfg = try EnvConfig.load(allocator, environ_map);
+    defer env_cfg.deinit(allocator);
 
-    if (env.api_key.len == 0) reportMissingApiKey();
+    if (env_cfg.api_key.len == 0) reportMissingApiKey();
 
-    const endpoint = try buildEndpoint(allocator, env.api_url);
+    const endpoint = try buildEndpoint(allocator, env_cfg.api_url);
     defer allocator.free(endpoint);
 
-    const machine = try machine_id.getMachineId(allocator);
+    const machine = try machine_id.getMachineId(allocator, io, environ_map);
     const machine_slice = machine[0..];
     std.log.debug("Machine ID: {s}", .{machine_slice});
 
@@ -44,13 +46,13 @@ pub fn run(
     var tz_label_buf: [16]u8 = undefined;
     const timezone_label = timeutil.formatTimezoneLabel(&tz_label_buf, timezone_offset_minutes);
 
-    const payload = try buildUploadPayload(allocator, machine_slice, providers, timezone_label);
+    const payload = try buildUploadPayload(allocator, environ_map, machine_slice, providers, timezone_label);
     defer allocator.free(payload);
 
     std.log.info("Uploading summary to {s}...", .{endpoint});
     var upload_timer: std.time.Timer = try .start();
-    var response = sendPayload(allocator, endpoint, env.api_key, payload) catch |err| {
-        std.log.err("Connection failed. Is the server running at {s}? ({s})", .{ env.api_url, @errorName(err) });
+    var response = sendPayload(allocator, endpoint, env_cfg.api_key, payload) catch |err| {
+        std.log.err("Connection failed. Is the server running at {s}? ({s})", .{ env_cfg.api_url, @errorName(err) });
         return err;
     };
     defer response.deinit();
@@ -63,22 +65,14 @@ const EnvConfig = struct {
     api_url: []const u8,
     api_key: []const u8,
 
-    fn load(allocator: std.mem.Allocator) !EnvConfig {
-        const raw_url = std.process.getEnvVarOwned(allocator, "DASHBOARD_API_URL") catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => try allocator.dupe(u8, DEFAULT_API_URL),
-            else => return err,
-        };
+    fn load(allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map) !EnvConfig {
+        const raw_url = environ_map.get("DASHBOARD_API_URL") orelse DEFAULT_API_URL;
         const trimmed_url = std.mem.trim(u8, raw_url, " \n\r\t");
         const api_url = try allocator.dupe(u8, trimmed_url);
-        allocator.free(raw_url);
 
-        const raw_key = std.process.getEnvVarOwned(allocator, "DASHBOARD_API_KEY") catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => try allocator.dupe(u8, ""),
-            else => return err,
-        };
+        const raw_key = environ_map.get("DASHBOARD_API_KEY") orelse "";
         const trimmed_key = std.mem.trim(u8, raw_key, " \n\r\t");
         const api_key = try allocator.dupe(u8, trimmed_key);
-        allocator.free(raw_key);
 
         return .{ .api_url = api_url, .api_key = api_key };
     }
@@ -130,6 +124,7 @@ fn buildEndpoint(allocator: std.mem.Allocator, base: []const u8) ![]u8 {
 
 fn buildUploadPayload(
     allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
     machine: []const u8,
     providers: []const ProviderUpload,
     timezone_label: []const u8,
@@ -137,10 +132,10 @@ fn buildUploadPayload(
     const timestamp = try timeutil.currentTimestampIso8601(allocator);
     defer allocator.free(timestamp);
 
-    const hostname = try identity.getHostname(allocator);
+    const hostname = try identity.getHostname(allocator, environ_map);
     defer allocator.free(hostname);
 
-    const username = try identity.getUsername(allocator);
+    const username = try identity.getUsername(allocator, environ_map);
     defer allocator.free(username);
 
     const display_name = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ username, hostname });

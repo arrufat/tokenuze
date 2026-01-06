@@ -8,13 +8,15 @@ const test_helpers = @import("test_helpers.zig");
 const db_dirname = ".crush";
 const db_filename = "crush.db";
 
-pub fn pathHint(allocator: std.mem.Allocator) ![]u8 {
+pub fn pathHint(allocator: std.mem.Allocator, _: *const std.process.Environ.Map) ![]u8 {
     return allocator.dupe(u8, ".crush/crush.db (searched recursively from cwd)");
 }
 
 pub fn collect(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     summaries: *model.SummaryBuilder,
     filters: model.DateFilters,
     progress: ?std.Progress.Node,
@@ -35,20 +37,18 @@ pub fn collect(
         }.ingest,
     };
 
-    try streamEvents(shared_allocator, temp_allocator, filters, consumer, progress);
+    try streamEvents(shared_allocator, temp_allocator, io, environ_map, filters, consumer, progress);
 }
 
 pub fn streamEvents(
     shared_allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
     filters: model.DateFilters,
     consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
-    var threaded = std.Io.Threaded.init(shared_allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
     var db_paths = try findCrushDbPaths(shared_allocator, temp_allocator, io);
     defer {
         for (db_paths.items) |p| shared_allocator.free(p);
@@ -79,6 +79,7 @@ pub fn streamEvents(
         .shared_allocator = shared_allocator,
         .progress = progress_node,
         .io = io,
+        .environ_map = environ_map,
     };
 
     var group = std.Io.Group.init;
@@ -101,6 +102,7 @@ const WorkState = struct {
     shared_allocator: std.mem.Allocator,
     progress: ?std.Progress.Node,
     io: std.Io,
+    environ_map: *const std.process.Environ.Map,
 };
 
 fn workerMain(state: *WorkState) void {
@@ -128,7 +130,7 @@ fn processDb(state: *const WorkState, temp_allocator: std.mem.Allocator, db_path
         return;
     };
 
-    const json_rows = runSqliteQuery(temp_allocator, state.io, db_path) catch |err| {
+    const json_rows = runSqliteQuery(temp_allocator, state.io, state.environ_map, db_path) catch |err| {
         std.log.info("crush: skipping {s}, sqlite3 query failed ({s})", .{ db_path, @errorName(err) });
         return;
     };
@@ -211,7 +213,12 @@ test "crush parses sqlite output fixture" {
     try testing.expect(count > 0);
 }
 
-fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8) ![]u8 {
+fn runSqliteQuery(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: *const std.process.Environ.Map,
+    db_path: []const u8,
+) ![]u8 {
     // Query to get sessions with usage, joining messages to find the model.
     // We prioritize messages that have a non-empty model.
     const query =
@@ -226,8 +233,9 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
     ;
     var argv = [_][]const u8{ "sqlite3", "-json", db_path, query };
 
-    var result = std.process.Child.run(allocator, io, .{
-        .argv = &argv,
+    var result = std.process.run(allocator, io, .{
+        .argv = argv[0..],
+        .environ_map = environ_map,
         .max_output_bytes = 64 * 1024 * 1024,
     }) catch |err| {
         if (err == error.FileNotFound) {
@@ -238,7 +246,7 @@ fn runSqliteQuery(allocator: std.mem.Allocator, io: std.Io, db_path: []const u8)
     defer allocator.free(result.stderr);
 
     const exit_code: u8 = switch (result.term) {
-        .Exited => |code| code,
+        .exited => |code| code,
         else => 255,
     };
     if (exit_code != 0) {

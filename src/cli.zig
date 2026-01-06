@@ -188,8 +188,12 @@ pub fn printVersion(io: std.Io, version: []const u8) !void {
     };
 }
 
-pub fn printAgentList(io: std.Io, allocator: std.mem.Allocator) !void {
-    var infos = try tokenuze.providerPathInfos(allocator);
+pub fn printAgentList(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+) !void {
+    var infos = try tokenuze.providerPathInfos(allocator, environ_map);
     defer {
         for (infos.items) |info| allocator.free(info.path);
         infos.deinit(allocator);
