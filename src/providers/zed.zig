@@ -4,7 +4,6 @@ const assert = std.debug.assert;
 const builtin = @import("builtin");
 
 const Context = @import("../Context.zig");
-
 const model = @import("../model.zig");
 const UsageAccumulator = model.UsageAccumulator;
 const usageFieldForKey = model.usageFieldForKey;
@@ -15,11 +14,6 @@ const test_helpers = @import("test_helpers.zig");
 const linux_parts = [_][]const u8{ ".local", "share", "zed", "threads", "threads.db" };
 const mac_parts = [_][]const u8{ "Library", "Application Support", "Zed", "threads", "threads.db" };
 const windows_parts = [_][]const u8{ "Zed", "threads", "threads.db" };
-const parse_ctx = provider.ParseContext{
-    .provider_name = "zed",
-    .legacy_fallback_model = null,
-    .cached_counts_overlap_input = false,
-};
 
 pub fn collect(
     ctx: Context,
