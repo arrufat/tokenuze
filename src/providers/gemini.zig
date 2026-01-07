@@ -6,43 +6,65 @@ const provider = @import("provider.zig");
 const ModelState = provider.ModelState;
 
 const fallback_pricing = [_]provider.FallbackPricingEntry{
+    .{ .name = "gemini-3-pro", .pricing = .{
+        .input_cost_per_m = 2.00,
+        .cache_creation_cost_per_m = 2.00,
+        .cached_input_cost_per_m = 0.20,
+        .output_cost_per_m = 12.00,
+    } },
+    .{ .name = "gemini-3-pro-preview", .pricing = .{
+        .input_cost_per_m = 2.00,
+        .cache_creation_cost_per_m = 2.00,
+        .cached_input_cost_per_m = 0.20,
+        .output_cost_per_m = 12.00,
+    } },
+    .{ .name = "gemini-3-flash", .pricing = .{
+        .input_cost_per_m = 0.50,
+        .cache_creation_cost_per_m = 0.50,
+        .cached_input_cost_per_m = 0.05,
+        .output_cost_per_m = 3.00,
+    } },
+    .{ .name = "gemini-3-flash-preview", .pricing = .{
+        .input_cost_per_m = 0.50,
+        .cache_creation_cost_per_m = 0.50,
+        .cached_input_cost_per_m = 0.05,
+        .output_cost_per_m = 3.00,
+    } },
     .{ .name = "gemini-2.5-pro", .pricing = .{
         .input_cost_per_m = 1.25,
         .cache_creation_cost_per_m = 1.25,
         .cached_input_cost_per_m = 0.125,
         .output_cost_per_m = 10.0,
     } },
-    // Used by some log sources (e.g. Zed) and not always present in the remote pricing dataset.
-    // Keep aligned with the "flash" fallback pricing unless/until a more specific entry is available.
-    .{ .name = "gemini-3-flash", .pricing = .{
-        .input_cost_per_m = 0.30,
-        .cache_creation_cost_per_m = 0.30,
-        .cached_input_cost_per_m = 0.075,
-        .output_cost_per_m = 2.50,
+    .{ .name = "gemini-2.0-flash", .pricing = .{
+        .input_cost_per_m = 0.10,
+        .cache_creation_cost_per_m = 0.10,
+        .cached_input_cost_per_m = 0.01,
+        .output_cost_per_m = 0.40,
     } },
-    .{ .name = "gemini-3-flash-preview", .pricing = .{
-        .input_cost_per_m = 0.30,
-        .cache_creation_cost_per_m = 0.30,
-        .cached_input_cost_per_m = 0.075,
-        .output_cost_per_m = 2.50,
+    .{ .name = "gemini-2.0-flash-lite", .pricing = .{
+        .input_cost_per_m = 0.075,
+        .cache_creation_cost_per_m = 0.075,
+        .cached_input_cost_per_m = 0.0075,
+        .output_cost_per_m = 0.30,
     } },
     .{ .name = "gemini-flash-latest", .pricing = .{
-        .input_cost_per_m = 0.30,
-        .cache_creation_cost_per_m = 0.30,
-        .cached_input_cost_per_m = 0.075,
-        .output_cost_per_m = 2.50,
+        .input_cost_per_m = 0.075,
+        .cache_creation_cost_per_m = 0.075,
+        .cached_input_cost_per_m = 0.01875,
+        .output_cost_per_m = 0.30,
     } },
     .{ .name = "gemini-1.5-pro", .pricing = .{
-        .input_cost_per_m = 3.50,
-        .cache_creation_cost_per_m = 3.50,
-        .cached_input_cost_per_m = 3.50,
-        .output_cost_per_m = 10.50,
+        .input_cost_per_m = 1.25,
+        .cache_creation_cost_per_m = 1.25,
+        .cached_input_cost_per_m = 0.3125,
+        .output_cost_per_m = 10.00,
     } },
     .{ .name = "gemini-1.5-flash", .pricing = .{
-        .input_cost_per_m = 0.35,
-        .cache_creation_cost_per_m = 0.35,
-        .cached_input_cost_per_m = 0.35,
-        .output_cost_per_m = 1.05,
+        .input_cost_per_m = 0.075,
+        .cache_creation_cost_per_m = 0.075,
+        .cached_input_cost_per_m = 0.01875,
+        .output_cost_per_m = 0.30,
     } },
 };
 
