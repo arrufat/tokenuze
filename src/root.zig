@@ -479,7 +479,6 @@ fn progressHandle(node: std.Progress.Node) ?std.Progress.Node {
 fn flushOutput(writer: anytype) !void {
     writer.flush() catch |err| switch (err) {
         error.WriteFailed => {},
-        else => return err,
     };
 }
 

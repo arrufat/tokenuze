@@ -22,6 +22,7 @@ pub const DateFilters = struct {
     pretty_output: bool = false,
     output_format: OutputFormat = .table,
     timezone_offset_minutes: i16 = @intCast(timeutil.default_timezone_offset_minutes),
+    recursive: bool = false,
 };
 
 pub const ParseDateError = error{

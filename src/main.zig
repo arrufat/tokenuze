@@ -108,7 +108,6 @@ fn printMachineId(ctx: tokenuze.Context) !void {
     try writer.print("{s}\n", .{id[0..]});
     writer.flush() catch |err| switch (err) {
         error.WriteFailed => {},
-        else => return err,
     };
 }
 
@@ -133,6 +132,5 @@ fn handleSessionsOutput(ctx: tokenuze.Context, options: cli.CliOptions) !void {
     }
     writer.flush() catch |err| switch (err) {
         error.WriteFailed => {},
-        else => return err,
     };
 }

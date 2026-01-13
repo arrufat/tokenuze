@@ -44,7 +44,7 @@ pub fn streamEvents(
     consumer: provider.EventConsumer,
     progress: ?std.Progress.Node,
 ) !void {
-    var db_paths = try findCrushDbPaths(ctx);
+    var db_paths = try findCrushDbPaths(ctx, filters.recursive);
     defer {
         for (db_paths.items) |p| ctx.allocator.free(p);
         db_paths.deinit(ctx.allocator);
@@ -132,7 +132,7 @@ fn processDb(ctx: Context, filters: model.DateFilters, consumer: provider.EventC
     };
 }
 
-fn findCrushDbPaths(ctx: Context) !std.ArrayList([]u8) {
+fn findCrushDbPaths(ctx: Context, recursive: bool) !std.ArrayList([]u8) {
     const allocator = ctx.allocator;
     const temp_allocator = ctx.temp_allocator;
     const io = ctx.io;
@@ -163,6 +163,7 @@ fn findCrushDbPaths(ctx: Context) !std.ArrayList([]u8) {
             } orelse break;
 
             if (entry.kind == .directory) {
+                if (!recursive) continue;
                 if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;
                 const child = std.fs.path.join(temp_allocator, &.{ dir_path, entry.name }) catch |err| {
                     std.log.debug("crush: join failed for {s}/{s} ({s})", .{ dir_path, entry.name, @errorName(err) });
