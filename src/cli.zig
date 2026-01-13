@@ -37,6 +37,7 @@ const OptionId = enum {
     version,
     help,
     list_agents,
+    recursive,
 };
 
 const OptionArgKind = enum {
@@ -66,6 +67,7 @@ const option_specs = [_]OptionSpec{
     .{ .id = .upload, .long_name = "upload", .desc = "Upload Tokenuze JSON via DASHBOARD_API_KEY and DASHBOARD_API_URL envs" },
     .{ .id = .machine_id, .long_name = "machine-id", .desc = "Print the machine id and exit" },
     .{ .id = .list_agents, .long_name = "list-agents", .desc = "List supported agents and their usage paths" },
+    .{ .id = .recursive, .long_name = "recursive", .short_name = 'r', .desc = "Recursively search for data files (supported by some providers)" },
     .{ .id = .version, .long_name = "version", .desc = "Print version number and exit" },
     .{ .id = .help, .long_name = "help", .short_name = 'h', .desc = "Show this message and exit" },
 };
@@ -184,7 +186,6 @@ pub fn printVersion(io: std.Io, version: []const u8) !void {
     try writer.print("{s}\n", .{version});
     writer.flush() catch |err| switch (err) {
         error.WriteFailed => {},
-        else => return err,
     };
 }
 
@@ -204,7 +205,6 @@ pub fn printAgentList(ctx: tokenuze.Context) !void {
     }
     writer.flush() catch |err| switch (err) {
         error.WriteFailed => {},
-        else => return err,
     };
 }
 
@@ -275,6 +275,7 @@ fn applyOption(
             options.output_explicit = true;
         },
         .list_agents => options.list_agents = true,
+        .recursive => options.filters.recursive = true,
         .log_level => {
             const value = args.next() orelse return missingValueError(spec.long_name);
             options.log_level = try parseLogLevelArg(value);

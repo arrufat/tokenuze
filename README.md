@@ -13,7 +13,7 @@ The output is a table or JSON, suitable for dashboards.
 - [Amp](https://ampcode.com/)
 - [Claude Code](https://www.claude.com/product/claude-code)
 - [Codex CLI](https://developers.openai.com/codex/cli/)
-- [Crush](https://github.com/charmbracelet/crush): project-based, recursively crawled
+- [Crush](https://github.com/charmbracelet/crush): project-based (supports recursive crawling with `-r`)
 - [Gemini CLI](https://geminicli.com/)
 - [Opencode](https://opencode.ai/)
 - [Zed](https://zed.dev/)
@@ -49,6 +49,11 @@ tokenuze --agent claude --agent codex
 And combine everything
 ```
 tokenuze --agent claude --agent codex --since 20250101 --until 20250107
+```
+
+Use the `-r` or `--recursive` flag to enable recursive searching (supported by providers like Crush):
+```bash
+tokenuze --agent crush --recursive
 ```
 
 By appending the `--sessions` flag you can display session usage instead of daily.
