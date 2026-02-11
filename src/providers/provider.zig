@@ -496,8 +496,7 @@ pub const RemotePricingStats = struct {
 };
 
 pub fn loadRemotePricing(
-    shared_allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     pricing: *model.PricingMap,
 ) !RemotePricingStats {
     var stats: RemotePricingStats = .{};
@@ -506,14 +505,15 @@ pub fn loadRemotePricing(
         return stats;
     }
 
+    const clock: std.Io.Clock = .awake;
     stats.attempted = true;
-    var fetch_timer = try std.time.Timer.start();
+    const start_time: std.Io.Timestamp = .now(ctx.io, clock);
     const before_fetch = pricing.count();
     var fetch_error: ?anyerror = null;
-    fetchRemotePricing(shared_allocator, temp_allocator, pricing) catch |err| {
+    fetchRemotePricing(ctx.allocator, ctx.temp_allocator, pricing) catch |err| {
         fetch_error = err;
     };
-    stats.elapsed_ms = nsToMs(fetch_timer.read());
+    stats.elapsed_ms = @floatFromInt(start_time.durationTo(.now(ctx.io, clock)).toMilliseconds());
     if (fetch_error) |err| {
         stats.failure = err;
     } else {
@@ -1067,7 +1067,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             filters: model.DateFilters,
             progress: ?std.Progress.Node,
         ) !void {
-            var total_timer = try std.time.Timer.start();
+            const clock: std.Io.Clock = .awake;
+            const total_start: std.Io.Timestamp = .now(ctx.io, clock);
 
             if (progress) |node| std.Progress.Node.setEstimatedTotalItems(node, 1);
 
@@ -1075,7 +1076,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             if (progress) |node| {
                 events_progress = std.Progress.Node.start(node, "scan sessions", 0);
             }
-            var events_timer = try std.time.Timer.start();
+            const events_start: std.Io.Timestamp = .now(ctx.io, clock);
             const before_events = summaries.eventCount();
             var builder_mutex: std.Io.Mutex = .init;
             var summary_ctx = SummaryConsumer{ .builder = summaries };
@@ -1088,13 +1089,13 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const after_events = summaries.eventCount();
             if (events_progress) |node| std.Progress.Node.end(node);
             std.log.debug(
-                "{s}.collectEvents produced {d} new events in {d:.2}ms",
-                .{ provider_name, after_events - before_events, nsToMs(events_timer.read()) },
+                "{s}.collectEvents produced {d} new events in {d}ms",
+                .{ provider_name, after_events - before_events, events_start.durationTo(.now(ctx.io, clock)).toMilliseconds() },
             );
 
             std.log.debug(
-                "{s}.collect completed in {d:.2}ms",
-                .{ provider_name, nsToMs(total_timer.read()) },
+                "{s}.collect completed in {d}ms",
+                .{ provider_name, total_start.durationTo(.now(ctx.io, clock)).toMilliseconds() },
             );
         }
 
@@ -1107,12 +1108,12 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         }
 
         pub fn loadPricingData(
-            shared_allocator: std.mem.Allocator,
+            ctx: Context,
             pricing: *model.PricingMap,
         ) !void {
             for (fallback_pricing) |fallback| {
                 if (pricing.get(fallback.name) != null) continue;
-                const key = try shared_allocator.dupe(u8, fallback.name);
+                const key = try ctx.allocator.dupe(u8, fallback.name);
                 try pricing.put(key, fallback.pricing);
             }
         }
@@ -1132,6 +1133,9 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const shared_allocator = ctx.allocator;
             const temp_allocator = ctx.temp_allocator;
             const io = ctx.io;
+            const clock: std.Io.Clock = .awake;
+            const start_time: std.Io.Timestamp = .now(io, clock);
+
             const SharedContext = struct {
                 shared_allocator: std.mem.Allocator,
                 temp_allocator: std.mem.Allocator,
@@ -1143,8 +1147,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 deduper: ?*MessageDeduper,
                 consumer: EventConsumer,
             };
-
-            var timer = try std.time.Timer.start();
 
             const sessions_dir = resolveSessionsDir(ctx) catch |err| {
                 std.log.info("{s}.collectEvents: skipping, unable to resolve sessions dir ({s})", .{ provider_name, @errorName(err) });
@@ -1183,7 +1185,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     std.Progress.Node.setEstimatedTotalItems(node, 0);
                     std.Progress.Node.setCompletedItems(node, 0);
                 }
-                std.log.debug("{s}.collectEvents: scanned 0 files in {d:.2}ms", .{ provider_name, nsToMs(timer.read()) });
+                std.log.debug("{s}.collectEvents: scanned 0 files in {d}ms", .{ provider_name, start_time.durationTo(.now(io, clock)).toMilliseconds() });
                 return;
             }
 
@@ -1314,8 +1316,8 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const final_completed = completed.load(.acquire);
 
             std.log.debug(
-                "{s}.collectEvents: scanned {d} files in {d:.2}ms",
-                .{ provider_name, final_completed, nsToMs(timer.read()) },
+                "{s}.collectEvents: scanned {d} files in {d}ms",
+                .{ provider_name, final_completed, start_time.durationTo(.now(io, clock)).toMilliseconds() },
             );
         }
 

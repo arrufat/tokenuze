@@ -170,7 +170,10 @@ fn readTrimmedFile(allocator: Allocator, io: Io, path: []const u8) !?[]u8 {
 fn readIntoBuffer(file: Io.File, io: Io, buffer: []u8) ![]u8 {
     var filled: usize = 0;
     while (filled < buffer.len) {
-        const amount = try file.readStreaming(io, &.{buffer[filled..]});
+        const amount = file.readStreaming(io, &.{buffer[filled..]}) catch |err| switch (err) {
+            error.EndOfStream => 0,
+            else => return err,
+        };
         if (amount == 0) break;
         filled += amount;
     }

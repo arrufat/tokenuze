@@ -49,7 +49,8 @@ pub fn run(
     defer ctx.allocator.free(payload);
 
     std.log.info("Uploading summary to {s}...", .{endpoint});
-    var upload_timer: std.time.Timer = try .start();
+    const clock: std.Io.Clock = .awake;
+    const start_time: std.Io.Timestamp = .now(ctx.io, clock);
     var response = sendPayload(ctx.allocator, endpoint, env_cfg.api_key, payload) catch |err| {
         std.log.err("Connection failed. Is the server running at {s}? ({s})", .{ env_cfg.api_url, @errorName(err) });
         return err;
@@ -57,7 +58,7 @@ pub fn run(
     defer response.deinit();
 
     try handleResponse(response);
-    std.log.info("Usage reported successfully in {d:.2}ms", .{timeutil.nsToMs(upload_timer.read())});
+    std.log.info("Usage reported successfully in {d}ms", .{start_time.durationTo(.now(ctx.io, clock)).toMilliseconds()});
 }
 
 const EnvConfig = struct {
@@ -231,44 +232,3 @@ const RawJson = struct {
         jw.endWriteRaw();
     }
 };
-
-fn daysFromCivil(year: i32, month_u8: u8, day_u8: u8) i64 {
-    const m = @as(i32, month_u8);
-    const d = @as(i32, day_u8);
-    var y = year;
-    var mm = m;
-    if (mm <= 2) {
-        y -= 1;
-        mm += 12;
-    }
-
-    const era = if (y >= 0) @divTrunc(y, 400) else -@divTrunc(-y, 400) - 1;
-    const yoe = y - era * 400;
-    const doy = @divTrunc(153 * (mm - 3) + 2, 5) + d - 1;
-    const doe = yoe * 365 + @divTrunc(yoe, 4) - @divTrunc(yoe, 100) + @divTrunc(yoe, 400) + doy;
-    return @as(i64, era) * 146097 + @as(i64, doe) - 719468;
-}
-
-fn currentUnixSeconds() !u64 {
-    const os = @import("builtin").target.os.tag;
-    return switch (os) {
-        .windows => windowsUnixSeconds(),
-        else => posixUnixSeconds(),
-    };
-}
-
-fn posixUnixSeconds() !u64 {
-    const spec = try std.posix.clock_gettime(std.posix.CLOCK.REALTIME);
-    const raw_secs = if (@hasField(std.posix.timespec, "tv_sec"))
-        @field(spec, "tv_sec")
-    else
-        @field(spec, "sec");
-    return @as(u64, @intCast(raw_secs));
-}
-
-fn windowsUnixSeconds() !u64 {
-    const win = std.os.windows;
-    const intervals = @as(u64, @intCast(win.ntdll.RtlGetSystemTimePrecise()));
-    const WINDOWS_TO_UNIX_100NS = 11_644_473_600 * 10_000_000;
-    return (intervals - WINDOWS_TO_UNIX_100NS) / 10_000_000;
-}

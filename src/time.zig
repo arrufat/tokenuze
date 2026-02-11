@@ -155,10 +155,11 @@ pub fn currentTimestampIso8601(allocator: std.mem.Allocator) ![]u8 {
 }
 
 pub fn currentUnixSeconds() !u64 {
-    return switch (builtin.target.os.tag) {
-        .windows => windowsUnixSeconds(),
-        else => posixUnixSeconds(),
-    };
+    var io_thread: std.Io.Threaded = .init_single_threaded;
+    defer io_thread.deinit();
+    const io = io_thread.io();
+    const t: std.Io.Timestamp = .now(io, .real);
+    return @intCast(t.toSeconds());
 }
 
 pub const TimezoneError = error{TimezoneUnavailable};
@@ -426,21 +427,6 @@ fn writeTwoDigits(value: u8, dest: []u8) void {
 
 fn toDigit(value: anytype) u8 {
     return @as(u8, @intCast(value)) + '0';
-}
-
-fn posixUnixSeconds() !u64 {
-    const spec = try std.posix.clock_gettime(std.posix.CLOCK.REALTIME);
-    const raw_secs = if (@hasField(std.posix.timespec, "tv_sec"))
-        @field(spec, "tv_sec")
-    else
-        @field(spec, "sec");
-    return @as(u64, @intCast(raw_secs));
-}
-
-fn windowsUnixSeconds() !u64 {
-    const intervals = @as(u64, @intCast(windows.ntdll.RtlGetSystemTimePrecise()));
-    const WINDOWS_TO_UNIX_100NS = 11_644_473_600 * 10_000_000;
-    return (intervals - WINDOWS_TO_UNIX_100NS) / 10_000_000;
 }
 
 fn detectPosixTimezoneMinutes() !i32 {

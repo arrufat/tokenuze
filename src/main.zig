@@ -60,7 +60,7 @@ pub fn main(init: std.process.Init) !void {
 
         var pricing_cache = tokenuze.PricingCache.init(allocator);
         defer pricing_cache.deinit(allocator);
-        try pricing_cache.ensureLoaded(allocator, std.heap.page_allocator, options.providers, null);
+        try pricing_cache.ensureLoaded(ctx, options.providers, null);
 
         for (tokenuze.providers, 0..) |provider, idx| {
             if (!options.providers.includesIndex(idx)) continue;

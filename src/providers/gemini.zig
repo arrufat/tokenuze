@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const Context = @import("../Context.zig");
 const model = @import("../model.zig");
 const RawUsage = model.RawTokenUsage;
 const provider = @import("provider.zig");
@@ -72,8 +73,20 @@ test "gemini.loadPricingData provides gemini-3-flash-preview fallback" {
     const allocator = std.testing.allocator;
     var pricing = model.PricingMap.init(allocator);
     defer model.deinitPricingMap(&pricing, allocator);
+    var io: std.Io.Threaded = .init_single_threaded;
+    defer io.deinit();
 
-    try loadPricingData(allocator, &pricing);
+    var env_map: std.process.Environ.Map = .init(allocator);
+    defer env_map.deinit();
+
+    const ctx: Context = .{
+        .allocator = allocator,
+        .temp_allocator = allocator,
+        .io = io.io(),
+        .environ_map = &env_map,
+    };
+
+    try loadPricingData(ctx, &pricing);
     try std.testing.expect(pricing.get("gemini-3-flash-preview") != null);
 }
 
