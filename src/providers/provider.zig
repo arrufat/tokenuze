@@ -1405,9 +1405,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             defer arena.deinit();
             const allocator = arena.allocator();
 
-            const io = std.testing.io;
-
-            const info = try timestampFromSlice(io, allocator, "2025-02-15T09:30:00Z", 0) orelse unreachable;
+            const info = try timestampFromSlice(allocator, "2025-02-15T09:30:00Z", 0) orelse unreachable;
             try std.testing.expectEqualStrings("2025-02-15", info.local_iso_date[0..]);
         }
 
