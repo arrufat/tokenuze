@@ -206,7 +206,7 @@ pub fn updateTimestampFromReader(
 
 pub fn emitUsageEventWithTimestamp(
     io: std.Io,
-    ctx: anytype,
+    ctx: *const ParseContext,
     allocator: std.mem.Allocator,
     state: *ModelState,
     sink: EventSink,
