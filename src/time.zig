@@ -527,6 +527,7 @@ fn daysFromCivil(year: i32, month: u8, day: u8) i64 {
 }
 
 fn writeFourDigits(value: u16, dest: []u8) void {
+    std.debug.assert(dest.len > 3);
     dest[0] = toDigit(@divTrunc(value, 1000) % 10);
     dest[1] = toDigit(@divTrunc(value, 100) % 10);
     dest[2] = toDigit(@divTrunc(value, 10) % 10);
@@ -534,6 +535,7 @@ fn writeFourDigits(value: u16, dest: []u8) void {
 }
 
 fn writeTwoDigits(value: u8, dest: []u8) void {
+    std.debug.assert(dest.len > 1);
     dest[0] = toDigit(value / 10);
     dest[1] = toDigit(value % 10);
 }
