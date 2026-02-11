@@ -155,9 +155,9 @@ pub fn printHelp(io: std.Io) !void {
         \\
     , .{});
 
-    const default_tz_offset = tokenuze.detectLocalTimezoneOffsetMinutes() catch tokenuze.default_timezone_offset_minutes;
+    const default_tz_offset = tokenuze.detectLocalTimezoneOffsetMinutes(io) catch tokenuze.default_timezone_offset_minutes;
     var tz_label_buf: [16]u8 = undefined;
-    const tz_label = tokenuze.formatTimezoneLabel(&tz_label_buf, default_tz_offset);
+    const tz_label = tokenuze.formatTimezoneLabel(io, &tz_label_buf, default_tz_offset);
 
     var max_label: usize = 0;
     for (optionSpecs()) |spec| {

@@ -57,7 +57,7 @@ pub fn logFn(
 const CollectFn = *const fn (Context, *model.SummaryBuilder, model.DateFilters, ?std.Progress.Node) anyerror!void;
 
 const LoadPricingFn = *const fn (
-    std.mem.Allocator,
+    Context,
     *model.PricingMap,
 ) anyerror!void;
 
@@ -159,8 +159,7 @@ pub const PricingCache = struct {
 
     pub fn ensureLoaded(
         self: *PricingCache,
-        allocator: std.mem.Allocator,
-        temp_allocator: std.mem.Allocator,
+        ctx: Context,
         selection: ProviderSelection,
         progress_parent: ?*std.Progress.Node,
     ) !void {
@@ -168,7 +167,7 @@ pub const PricingCache = struct {
         if (missing_mask == 0) return;
 
         const missing_selection = ProviderSelection{ .mask = missing_mask };
-        try loadPricing(allocator, temp_allocator, missing_selection, &self.map, progress_parent);
+        try loadPricing(ctx, missing_selection, &self.map, progress_parent);
         self.loaded_mask |= missing_mask;
     }
 };
@@ -238,7 +237,7 @@ pub fn run(
 
 pub fn runWithContext(ctx: Context, filters: DateFilters, selection: ProviderSelection) !void {
     const enable_progress = std.Io.File.stdout().isTty(ctx.io) catch false;
-    logRunStart(filters, selection, enable_progress);
+    logRunStart(ctx, filters, selection, enable_progress);
     var summary = try collectSummary(ctx, filters, selection, enable_progress);
     defer summary.deinit(ctx.allocator);
 
@@ -268,12 +267,13 @@ pub fn renderSummaryAlloc(
 }
 
 pub fn renderSessionsTable(
+    io: std.Io,
     writer: *std.Io.Writer,
     allocator: std.mem.Allocator,
     recorder: *const model.SessionRecorder,
     timezone_offset_minutes: i32,
 ) !void {
-    try render.Renderer.writeSessionsTable(writer, allocator, recorder, timezone_offset_minutes);
+    try render.Renderer.writeSessionsTable(io, writer, allocator, recorder, timezone_offset_minutes);
 }
 
 pub fn renderSessionsAlloc(
@@ -371,9 +371,9 @@ const ProviderSelectionSummary = struct {
     count: usize,
 };
 
-fn logRunStart(filters: DateFilters, selection: ProviderSelection, enable_progress: bool) void {
+fn logRunStart(ctx: Context, filters: DateFilters, selection: ProviderSelection, enable_progress: bool) void {
     var tz_buf: [16]u8 = undefined;
-    const tz_label = formatTimezoneLabel(&tz_buf, filters.timezone_offset_minutes);
+    const tz_label = formatTimezoneLabel(ctx.io, &tz_buf, filters.timezone_offset_minutes);
     const since_label = if (filters.since) |since| since[0..] else "any";
     const until_label = if (filters.until) |until| until[0..] else "any";
 
@@ -516,20 +516,21 @@ fn collectSummaryInternal(
         errdefer std.Progress.setStatus(.failure);
     }
 
-    var total_timer = try std.time.Timer.start();
+    const clock: std.Io.Clock = .awake;
+    const total_start: std.Io.Timestamp = .now(ctx.io, clock);
 
     var temp_pricing_map: ?model.PricingMap = null;
     defer if (temp_pricing_map) |*map| model.deinitPricingMap(map, ctx.allocator);
 
     const pricing_map: *model.PricingMap = blk: {
         if (pricing_cache) |cache| {
-            try cache.ensureLoaded(ctx.allocator, ctx.temp_allocator, selection, progress_parent);
+            try cache.ensureLoaded(ctx, selection, progress_parent);
             break :blk &cache.map;
         }
 
         temp_pricing_map = .init(ctx.allocator);
         if (!selection.isEmpty()) {
-            try loadPricing(ctx.allocator, ctx.temp_allocator, selection, &temp_pricing_map.?, progress_parent);
+            try loadPricing(ctx, selection, &temp_pricing_map.?, progress_parent);
         }
         break :blk &temp_pricing_map.?;
     };
@@ -538,14 +539,14 @@ fn collectSummaryInternal(
 
     var summaries = summary_builder.items();
     if (summaries.len == 0) {
-        std.log.info("no events to process; total runtime {d:.2}ms", .{nsToMs(total_timer.read())});
+        std.log.info("no events to process; total runtime {d}ms", .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()});
         if (enable_progress) std.Progress.setStatus(.success);
         return SummaryResult{ .builder = summary_builder, .totals = totals };
     }
 
-    try finalizeSummaries(ctx.allocator, progress_parent, summaries, pricing_map, &totals, session_recorder);
+    try finalizeSummaries(ctx, progress_parent, summaries, pricing_map, &totals, session_recorder);
 
-    std.log.info("phase.total runtime {d:.2}ms", .{nsToMs(total_timer.read())});
+    std.log.info("phase.total runtime {d}ms", .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()});
     if (enable_progress) std.Progress.setStatus(.success);
 
     return SummaryResult{ .builder = summary_builder, .totals = totals };
@@ -568,18 +569,19 @@ fn collectSelectedProviders(
             .{ prov.phase_label, before_events },
         );
         const stats = blk: {
-            var collect_timer = try std.time.Timer.start();
+            const clock: std.Io.Clock = .awake;
+            const collect_start: std.Io.Timestamp = .now(ctx.io, clock);
             const phase_node = startProgressNode(progress_parent, prov.phase_label, 0);
             defer finishProgressNode(phase_node);
             try prov.collect(ctx, summary_builder, filters, progressHandle(phase_node));
             break :blk .{
-                .elapsed = nsToMs(collect_timer.read()),
+                .elapsed = collect_start.durationTo(.now(ctx.io, clock)).toMilliseconds(),
                 .events_added = summary_builder.eventCount() - before_events,
                 .total_events = summary_builder.eventCount(),
             };
         };
         std.log.info(
-            "phase.{s} completed in {d:.2}ms (events += {d}, total_events={d})",
+            "phase.{s} completed in {d}ms (events += {d}, total_events={d})",
             .{
                 prov.phase_label,
                 stats.elapsed,
@@ -591,30 +593,32 @@ fn collectSelectedProviders(
 }
 
 fn finalizeSummaries(
-    allocator: std.mem.Allocator,
+    ctx: Context,
     progress_parent: ?*std.Progress.Node,
     summaries: []DailySummary,
     pricing_map: *model.PricingMap,
     totals: *SummaryTotals,
     session_recorder: ?*model.SessionRecorder,
 ) !void {
-    var missing_set = std.StringHashMap(u8).init(allocator);
+    var missing_set: std.StringHashMap(u8) = .init(ctx.allocator);
     defer missing_set.deinit();
 
+    const clock: std.Io.Clock = .awake;
+
     const pricing_elapsed = blk: {
-        var pricing_timer = try std.time.Timer.start();
+        const pricing_start: std.Io.Timestamp = .now(ctx.io, clock);
         const pricing_node = startProgressNode(progress_parent, "apply pricing", summaries.len);
         defer finishProgressNode(pricing_node);
         const pricing_progress = progressHandle(pricing_node);
         for (summaries) |*summary| {
-            model.applyPricing(allocator, summary, pricing_map, &missing_set);
+            model.applyPricing(ctx.allocator, summary, pricing_map, &missing_set);
             std.sort.pdq(ModelSummary, summary.models.items, {}, modelLessThan);
             if (pricing_progress) |node| std.Progress.Node.completeOne(node);
         }
-        break :blk nsToMs(pricing_timer.read());
+        break :blk pricing_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     };
     std.log.debug(
-        "phase.apply_pricing completed in {d:.2}ms (days={d})",
+        "phase.apply_pricing completed in {d}ms (days={d})",
         .{ pricing_elapsed, summaries.len },
     );
 
@@ -623,45 +627,45 @@ fn finalizeSummaries(
     }
 
     const sort_elapsed = blk: {
-        var sort_timer = try std.time.Timer.start();
+        const sort_start = std.Io.Timestamp.now(ctx.io, clock);
         const sort_node = startProgressNode(progress_parent, "sort days", 0);
         defer finishProgressNode(sort_node);
         std.sort.pdq(DailySummary, summaries, {}, summaryLessThan);
-        break :blk nsToMs(sort_timer.read());
+        break :blk sort_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     };
     std.log.debug(
-        "phase.sort_days completed in {d:.2}ms (days={d})",
+        "phase.sort_days completed in {d}ms (days={d})",
         .{ sort_elapsed, summaries.len },
     );
 
     const totals_elapsed = blk: {
-        var totals_timer = try std.time.Timer.start();
+        const totals_start: std.Io.Timestamp = .now(ctx.io, clock);
         const totals_node = startProgressNode(progress_parent, "totals", 0);
         defer finishProgressNode(totals_node);
         model.accumulateTotals(summaries, totals);
-        try model.collectMissingModels(allocator, &missing_set, &totals.missing_pricing);
-        break :blk nsToMs(totals_timer.read());
+        try model.collectMissingModels(ctx.allocator, &missing_set, &totals.missing_pricing);
+        break :blk totals_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     };
     std.log.debug(
-        "phase.totals completed in {d:.2}ms (missing_pricing={d})",
+        "phase.totals completed in {d}ms (missing_pricing={d})",
         .{ totals_elapsed, totals.missing_pricing.items.len },
     );
 }
 
 fn loadPricing(
-    allocator: std.mem.Allocator,
-    temp_allocator: std.mem.Allocator,
+    ctx: Context,
     selection: ProviderSelection,
     pricing: *model.PricingMap,
     progress_parent: ?*std.Progress.Node,
 ) !void {
-    var pricing_timer = try std.time.Timer.start();
+    const clock: std.Io.Clock = .awake;
+    const start_time: std.Io.Timestamp = .now(ctx.io, clock);
     const pricing_node = startProgressNode(progress_parent, "load pricing", 0);
     defer finishProgressNode(pricing_node);
     std.log.debug("pricing.load begin (selection_mask=0x{x})", .{selection.mask});
 
     const before_models = pricing.count();
-    const remote_stats = try provider.loadRemotePricing(allocator, temp_allocator, pricing);
+    const remote_stats = try provider.loadRemotePricing(ctx, pricing);
     if (remote_stats.attempted) {
         if (remote_stats.failure) |err| {
             std.log.warn(
@@ -678,25 +682,25 @@ fn loadPricing(
         std.log.debug("pricing.remote_fetch skipped (already loaded)", .{});
     }
 
-    var fallback_timer = try std.time.Timer.start();
+    const fallback_start: std.Io.Timestamp = .now(ctx.io, clock);
     for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
         std.log.debug(
             "pricing.{s}.fallback start (models={d})",
             .{ prov.name, pricing.count() },
         );
-        try prov.load_pricing(allocator, pricing);
+        try prov.load_pricing(ctx, pricing);
     }
-    const fallback_elapsed = nsToMs(fallback_timer.read());
+    const fallback_elapsed = fallback_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     const fallback_added = pricing.count() - (before_models + remote_stats.models_added);
     std.log.debug(
-        "pricing.fallback ensured in {d:.2}ms (models += {d})",
+        "pricing.fallback ensured in {d}ms (models += {d})",
         .{ fallback_elapsed, fallback_added },
     );
 
     std.log.info(
-        "phase.load_pricing completed in {d:.2}ms (models={d}, models_added={d})",
-        .{ nsToMs(pricing_timer.read()), pricing.count(), pricing.count() - before_models },
+        "phase.load_pricing completed in {d}ms (models={d}, models_added={d})",
+        .{ start_time.durationTo(.now(ctx.io, clock)).toMilliseconds(), pricing.count(), pricing.count() - before_models },
     );
 }
 

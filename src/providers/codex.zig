@@ -166,7 +166,11 @@ const LineHandler = struct {
 
         var raw_timestamp = timestamp_token.?;
         timestamp_token = null;
-        const timestamp_info = try provider.timestampFromSlice(self.allocator, raw_timestamp.view(), self.timezone_offset_minutes) orelse {
+        const timestamp_info = try provider.timestampFromSlice(
+            self.allocator,
+            raw_timestamp.view(),
+            self.timezone_offset_minutes,
+        ) orelse {
             raw_timestamp.deinit(self.allocator);
             return;
         };
@@ -337,9 +341,8 @@ test "codex parser emits usage events from token_count entries" {
         .legacy_fallback_model = "gpt-5",
         .cached_counts_overlap_input = true,
     };
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const runtime = provider.ParseRuntime{ .io = io_single.io() };
+    const io = std.testing.io;
+    const runtime = provider.ParseRuntime{ .io = io };
 
     try parseSessionFile(
         worker_allocator,

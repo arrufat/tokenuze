@@ -211,9 +211,8 @@ test "amp parser emits usage events from ledger + message usage" {
         .legacy_fallback_model = null,
         .cached_counts_overlap_input = false,
     };
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const runtime = provider.ParseRuntime{ .io = io_single.io() };
+    const io = std.testing.io;
+    const runtime = provider.ParseRuntime{ .io = io };
 
     try parseSessionFile(
         worker_allocator,

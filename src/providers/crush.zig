@@ -82,8 +82,8 @@ pub fn streamEvents(
     try group.await(ctx.io);
 }
 
-pub fn loadPricingData(shared_allocator: std.mem.Allocator, pricing: *model.PricingMap) !void {
-    _ = shared_allocator;
+pub fn loadPricingData(ctx: Context, pricing: *model.PricingMap) !void {
+    _ = ctx;
     _ = pricing;
 }
 

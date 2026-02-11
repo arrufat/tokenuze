@@ -60,7 +60,7 @@ pub fn main(init: std.process.Init) !void {
 
         var pricing_cache = tokenuze.PricingCache.init(allocator);
         defer pricing_cache.deinit(allocator);
-        try pricing_cache.ensureLoaded(allocator, std.heap.page_allocator, options.providers, null);
+        try pricing_cache.ensureLoaded(ctx, options.providers, null);
 
         for (tokenuze.providers, 0..) |provider, idx| {
             if (!options.providers.includesIndex(idx)) continue;
@@ -124,7 +124,7 @@ fn handleSessionsOutput(ctx: tokenuze.Context, options: cli.CliOptions) !void {
 
     if (options.filters.output_format == .table) {
         const tz_offset: i32 = @intCast(options.filters.timezone_offset_minutes);
-        try tokenuze.renderSessionsTable(writer, ctx.allocator, &recorder, tz_offset);
+        try tokenuze.renderSessionsTable(ctx.io, writer, ctx.allocator, &recorder, tz_offset);
     } else {
         const json = try recorder.renderJson(ctx.allocator, options.filters.pretty_output);
         defer ctx.allocator.free(json);
