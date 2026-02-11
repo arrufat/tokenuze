@@ -31,9 +31,9 @@ pub const ParseTimezoneError = error{
 
 const seconds_per_day: i64 = 24 * 60 * 60;
 
-pub fn isoDateForTimezone(io: std.Io, timestamp: []const u8, offset_minutes: i32) TimestampError![10]u8 {
+pub fn isoDateForTimezone(timestamp: []const u8, offset_minutes: i32) TimestampError![10]u8 {
     if (offset_minutes == local_timezone_sentinel) {
-        return isoDateForLocalTimezone(io, timestamp);
+        return isoDateForLocalTimezone(timestamp);
     }
     const utc_seconds = try parseIso8601ToUtcSeconds(timestamp);
     return utcSecondsToOffsetIsoDate(utc_seconds, offset_minutes);
@@ -188,8 +188,7 @@ pub fn formatTimezoneLabel(io: std.Io, buffer: *[16]u8, offset_minutes: i32) []c
     return std.fmt.bufPrint(buffer, "UTC{c}{d:0>2}:{d:0>2}", .{ sign, hours, mins }) catch unreachable;
 }
 
-fn isoDateForLocalTimezone(io: std.Io, timestamp: []const u8) TimestampError![10]u8 {
-    _ = io;
+fn isoDateForLocalTimezone(timestamp: []const u8) TimestampError![10]u8 {
     const utc_seconds = try parseIso8601ToUtcSeconds(timestamp);
     if (utc_seconds < 0) return error.OutOfRange;
     const TimeT = c.time_t;
@@ -383,11 +382,10 @@ fn systemTimeToTm(system: win.SYSTEMTIME) c.tm {
 }
 
 test "isoDateForTimezone adjusts across day boundaries" {
-    const io = std.testing.io;
-    const positive = try isoDateForTimezone(io, "2025-09-01T16:30:00Z", 9 * 60);
+    const positive = try isoDateForTimezone("2025-09-01T16:30:00Z", 9 * 60);
     try std.testing.expectEqualStrings("2025-09-02", positive[0..]);
 
-    const negative = try isoDateForTimezone(io, "2025-09-01T04:00:00Z", -5 * 60);
+    const negative = try isoDateForTimezone("2025-09-01T04:00:00Z", -5 * 60);
     try std.testing.expectEqualStrings("2025-08-31", negative[0..]);
 }
 

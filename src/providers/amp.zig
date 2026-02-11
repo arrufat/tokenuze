@@ -125,7 +125,6 @@ fn parseSessionFile(
                 const ts = event.timestamp orelse continue;
 
                 const timestamp_info = (try provider.timestampFromSlice(
-                    self.io,
                     self.allocator,
                     ts,
                     self.timezone_offset_minutes,

@@ -181,7 +181,6 @@ fn parseClaudeRecordField(
     }
     if (std.mem.eql(u8, key, "timestamp")) {
         try provider.updateTimestampFromReader(
-            builder.handler.io,
             builder.handler.allocator,
             reader,
             builder.handler.timezone_offset_minutes,

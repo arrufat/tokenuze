@@ -190,7 +190,6 @@ fn parseSessionFile(
                     usage_raw.reasoning_output_tokens;
 
                 const timestamp_info = (try provider.timestampFromSlice(
-                    self.io,
                     self.allocator,
                     ts,
                     self.timezone_offset_minutes,

@@ -167,7 +167,6 @@ const LineHandler = struct {
         var raw_timestamp = timestamp_token.?;
         timestamp_token = null;
         const timestamp_info = try provider.timestampFromSlice(
-            self.io,
             self.allocator,
             raw_timestamp.view(),
             self.timezone_offset_minutes,

@@ -178,7 +178,6 @@ const MessageRecord = struct {
         defer self.allocator.free(iso);
 
         const timestamp_info = (try provider.timestampFromSlice(
-            self.io,
             self.allocator,
             iso,
             self.timezone_offset_minutes,
