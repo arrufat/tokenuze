@@ -18,7 +18,6 @@ const CLAUDE_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
 };
 
 const ProviderExports = provider.makeProvider(.{
-    .name = "claude",
     .scope = .claude,
     .sessions_dir_suffix = "/.claude/projects",
     .legacy_fallback_model = null,

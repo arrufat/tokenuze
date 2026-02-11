@@ -33,7 +33,6 @@ const fallback_pricing = [_]provider.FallbackPricingEntry{
 };
 
 const ProviderExports = provider.makeProvider(.{
-    .name = "codex",
     .scope = .codex,
     .sessions_dir_suffix = "/.codex/sessions",
     .legacy_fallback_model = "gpt-5",

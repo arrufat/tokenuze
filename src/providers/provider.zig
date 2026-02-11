@@ -465,7 +465,6 @@ pub const ParseSessionFn = *const fn (
 ) anyerror!void;
 
 pub const ProviderConfig = struct {
-    name: []const u8,
     scope: @EnumLiteral(),
     sessions_dir_suffix: []const u8,
     legacy_fallback_model: ?[]const u8 = null,
@@ -1033,7 +1032,7 @@ fn readNumberValue(allocator: std.mem.Allocator, reader: *std.json.Reader) !f64 
 }
 
 pub fn Provider(comptime cfg: ProviderConfig) type {
-    const provider_name = cfg.name;
+    const provider_name = @tagName(cfg.scope);
 
     const sessions_dir_suffix = cfg.sessions_dir_suffix;
 

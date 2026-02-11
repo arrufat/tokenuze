@@ -7,7 +7,6 @@ const provider = @import("provider.zig");
 const MessageDeduper = provider.MessageDeduper;
 
 const ProviderExports = provider.makeProvider(.{
-    .name = "opencode",
     .scope = .opencode,
     .sessions_dir_suffix = "/.local/share/opencode/storage/session",
     .legacy_fallback_model = null,
