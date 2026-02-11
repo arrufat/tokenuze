@@ -34,6 +34,7 @@ const fallback_pricing = [_]provider.FallbackPricingEntry{
 
 const ProviderExports = provider.makeProvider(.{
     .name = "codex",
+    .scope = .codex,
     .sessions_dir_suffix = "/.codex/sessions",
     .legacy_fallback_model = "gpt-5",
     .fallback_pricing = fallback_pricing[0..],
@@ -121,9 +122,9 @@ const LineHandler = struct {
 
     fn handle(self: *LineHandler, line: []const u8, line_index: usize) !void {
         provider.parseJsonLine(self.allocator, line, self, processSessionLine) catch |err| {
-            std.log.warn(
-                "{s}: failed to parse codex session file '{s}' line {d} ({s})",
-                .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
+            std.log.scoped(.codex).warn(
+                "failed to parse codex session file '{s}' line {d} ({s})",
+                .{ self.file_path, line_index, @errorName(err) },
             );
         };
     }
@@ -209,7 +210,7 @@ const LineHandler = struct {
             .model = resolved.name,
             .usage = delta,
             .is_fallback = resolved.is_fallback,
-            .display_input_tokens = provider.ParseContext.computeDisplayInput(delta),
+            .display_input_tokens = provider.computeDisplayInput(delta),
         };
         try self.sink.emit(self.io, event);
     }

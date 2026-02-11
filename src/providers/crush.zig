@@ -6,6 +6,8 @@ const model = @import("../model.zig");
 const provider = @import("provider.zig");
 const test_helpers = @import("test_helpers.zig");
 
+const log = std.log.scoped(.crush);
+
 const db_dirname = ".crush";
 const db_filename = "crush.db";
 
@@ -51,7 +53,7 @@ pub fn streamEvents(
     }
 
     if (db_paths.items.len == 0) {
-        std.log.info("crush: skipping, no .crush/crush.db found under cwd", .{});
+        log.info("skipping, no .crush/crush.db found under cwd", .{});
         return;
     }
 
@@ -61,7 +63,7 @@ pub fn streamEvents(
         null;
 
     const cpu_count = std.Thread.getCpuCount() catch |err| blk: {
-        std.log.debug("crush: getCpuCount failed, defaulting to 1 ({s})", .{@errorName(err)});
+        log.debug("getCpuCount failed, defaulting to 1 ({s})", .{@errorName(err)});
         break :blk 1;
     };
     const worker_count = @max(@as(usize, 1), @min(db_paths.items.len, cpu_count));
@@ -114,21 +116,21 @@ fn workerMain(state: *WorkState) void {
 fn processDb(ctx: Context, filters: model.DateFilters, consumer: provider.EventConsumer, db_path: []const u8) void {
     std.Io.Dir.cwd().access(ctx.io, db_path, .{}) catch |err| {
         if (err == error.FileNotFound) {
-            std.log.debug("crush: skipping missing db at {s}", .{db_path});
+            log.debug("skipping missing db at {s}", .{db_path});
             return;
         }
-        std.log.warn("crush: access failed for {s} ({s})", .{ db_path, @errorName(err) });
+        log.warn("access failed for {s} ({s})", .{ db_path, @errorName(err) });
         return;
     };
 
     const json_rows = runSqliteQuery(ctx, db_path) catch |err| {
-        std.log.info("crush: skipping {s}, sqlite3 query failed ({s})", .{ db_path, @errorName(err) });
+        log.info("skipping {s}, sqlite3 query failed ({s})", .{ db_path, @errorName(err) });
         return;
     };
     defer ctx.temp_allocator.free(json_rows);
 
     parseRows(ctx, filters, consumer, json_rows) catch |err| {
-        std.log.warn("crush: failed to parse sqlite output from {s} ({s})", .{ db_path, @errorName(err) });
+        log.warn("failed to parse sqlite output from {s} ({s})", .{ db_path, @errorName(err) });
     };
 }
 
@@ -151,14 +153,14 @@ fn findCrushDbPaths(ctx: Context, recursive: bool) !std.ArrayList([]u8) {
         defer temp_allocator.free(dir_path);
 
         var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true, .follow_symlinks = false }) catch |err| {
-            std.log.debug("crush: skip dir {s} ({s})", .{ dir_path, @errorName(err) });
+            log.debug("skip dir {s} ({s})", .{ dir_path, @errorName(err) });
             continue;
         };
         defer dir.close(io);
         var it = dir.iterate();
         while (true) {
             const entry = it.next(io) catch |err| {
-                std.log.debug("crush: iterate failed in {s} ({s})", .{ dir_path, @errorName(err) });
+                log.debug("iterate failed in {s} ({s})", .{ dir_path, @errorName(err) });
                 break;
             } orelse break;
 
@@ -166,11 +168,11 @@ fn findCrushDbPaths(ctx: Context, recursive: bool) !std.ArrayList([]u8) {
                 if (!recursive) continue;
                 if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;
                 const child = std.fs.path.join(temp_allocator, &.{ dir_path, entry.name }) catch |err| {
-                    std.log.debug("crush: join failed for {s}/{s} ({s})", .{ dir_path, entry.name, @errorName(err) });
+                    log.debug("join failed for {s}/{s} ({s})", .{ dir_path, entry.name, @errorName(err) });
                     continue;
                 };
                 queue.append(temp_allocator, child) catch |err| {
-                    std.log.debug("crush: queue append failed for {s} ({s})", .{ child, @errorName(err) });
+                    log.debug("queue append failed for {s} ({s})", .{ child, @errorName(err) });
                     temp_allocator.free(child);
                     continue;
                 };
@@ -181,7 +183,7 @@ fn findCrushDbPaths(ctx: Context, recursive: bool) !std.ArrayList([]u8) {
             if (!std.mem.eql(u8, entry.name, db_filename)) continue;
 
             const file_path = std.fs.path.join(temp_allocator, &.{ dir_path, entry.name }) catch |err| {
-                std.log.debug("crush: join failed for file {s}/{s} ({s})", .{ dir_path, entry.name, @errorName(err) });
+                log.debug("join failed for file {s}/{s} ({s})", .{ dir_path, entry.name, @errorName(err) });
                 continue;
             };
             defer temp_allocator.free(file_path);
@@ -191,7 +193,7 @@ fn findCrushDbPaths(ctx: Context, recursive: bool) !std.ArrayList([]u8) {
             if (!std.mem.eql(u8, basename, db_dirname)) continue;
 
             const dup = try allocator.dupe(u8, file_path);
-            std.log.debug("crush: discovered db at {s}", .{file_path});
+            log.debug("discovered db at {s}", .{file_path});
             try list.append(allocator, dup);
         }
     }
@@ -230,7 +232,7 @@ fn runSqliteQuery(ctx: Context, db_path: []const u8) ![]u8 {
         .stderr_limit = .limited(64 * 1024 * 1024),
     }) catch |err| {
         if (err == error.FileNotFound) {
-            std.log.err("crush: sqlite3 CLI not found; install sqlite3 to enable Crush ingestion", .{});
+            log.err("sqlite3 CLI not found; install sqlite3 to enable Crush ingestion", .{});
         }
         return err;
     };
@@ -242,9 +244,9 @@ fn runSqliteQuery(ctx: Context, db_path: []const u8) ![]u8 {
     };
     if (exit_code != 0) {
         if (exit_code == 255 and std.mem.find(u8, result.stderr, "not found") != null) {
-            std.log.err("crush: sqlite3 CLI not found; install sqlite3 to enable Crush ingestion", .{});
+            log.err("sqlite3 CLI not found; install sqlite3 to enable Crush ingestion", .{});
         } else {
-            std.log.warn("crush: sqlite3 exited with code {d}: {s}", .{ exit_code, result.stderr });
+            log.warn("sqlite3 exited with code {d}: {s}", .{ exit_code, result.stderr });
         }
         ctx.temp_allocator.free(result.stdout);
         return error.SqliteFailed;

@@ -11,6 +11,8 @@ const parseTokenNumber = model.parseTokenNumber;
 const provider = @import("provider.zig");
 const test_helpers = @import("test_helpers.zig");
 
+const log = std.log.scoped(.zed);
+
 const linux_parts = [_][]const u8{ ".local", "share", "zed", "threads", "threads.db" };
 const mac_parts = [_][]const u8{ "Library", "Application Support", "Zed", "threads", "threads.db" };
 const windows_parts = [_][]const u8{ "Zed", "threads", "threads.db" };
@@ -48,19 +50,19 @@ pub fn streamEvents(
 ) !void {
     _ = progress;
     const db_path = resolveDbPath(ctx) catch |err| {
-        std.log.info("zed: skipping, unable to resolve db path ({s})", .{@errorName(err)});
+        log.info("skipping, unable to resolve db path ({s})", .{@errorName(err)});
         return;
     };
     defer ctx.allocator.free(db_path);
 
     const json_rows = runSqliteQuery(ctx, db_path) catch |err| {
-        std.log.info("zed: skipping, sqlite3 query failed ({s})", .{@errorName(err)});
+        log.info("skipping, sqlite3 query failed ({s})", .{@errorName(err)});
         return;
     };
     defer ctx.temp_allocator.free(json_rows);
 
     parseRows(ctx, filters, consumer, json_rows) catch |err| {
-        std.log.warn("zed: failed to parse sqlite output ({s})", .{@errorName(err)});
+        log.warn("failed to parse sqlite output ({s})", .{@errorName(err)});
     };
 }
 
@@ -110,7 +112,7 @@ fn runSqliteQuery(ctx: Context, db_path: []const u8) ![]u8 {
         .stderr_limit = .limited(64 * 1024 * 1024),
     }) catch |err| {
         if (err == error.FileNotFound) {
-            std.log.err("zed: sqlite3 CLI not found; install sqlite3 to enable Zed ingestion", .{});
+            log.err("sqlite3 CLI not found; install sqlite3 to enable Zed ingestion", .{});
         }
         return err;
     };
@@ -122,9 +124,9 @@ fn runSqliteQuery(ctx: Context, db_path: []const u8) ![]u8 {
     };
     if (exit_code != 0) {
         if (exit_code == 255 and std.mem.find(u8, result.stderr, "not found") != null) {
-            std.log.err("zed: sqlite3 CLI not found; install sqlite3 to enable Zed ingestion", .{});
+            log.err("sqlite3 CLI not found; install sqlite3 to enable Zed ingestion", .{});
         } else {
-            std.log.warn("zed: sqlite3 exited with code {d}: {s}", .{ exit_code, result.stderr });
+            log.warn("sqlite3 exited with code {d}: {s}", .{ exit_code, result.stderr });
         }
         ctx.temp_allocator.free(result.stdout);
         return error.SqliteFailed;
@@ -167,25 +169,25 @@ fn parseRow(ctx: Context, filters: model.DateFilters, consumer: provider.EventCo
 
     const blob_len = data_hex.len / 2;
     if (data_hex.len % 2 != 0) {
-        std.log.warn("zed: invalid hex length for thread {s} (len={d})", .{ thread_id, data_hex.len });
+        log.warn("invalid hex length for thread {s} (len={d})", .{ thread_id, data_hex.len });
         return;
     }
     const blob = try ctx.temp_allocator.alloc(u8, blob_len);
     errdefer ctx.temp_allocator.free(blob);
     _ = std.fmt.hexToBytes(blob, data_hex) catch |err| {
-        std.log.warn("zed: invalid hex data for thread {s} ({s})", .{ thread_id, @errorName(err) });
+        log.warn("invalid hex data for thread {s} ({s})", .{ thread_id, @errorName(err) });
         return;
     };
     defer ctx.temp_allocator.free(blob);
 
     const json_data = decompressIfNeeded(ctx.allocator, blob, data_type) catch |err| {
-        std.log.warn("zed: decompress failed ({s})", .{@errorName(err)});
+        log.warn("decompress failed ({s})", .{@errorName(err)});
         return;
     };
     defer ctx.allocator.free(json_data);
 
     parseThread(ctx, filters, consumer, thread_id, updated_at, json_data) catch |err| {
-        std.log.warn("zed: parse thread failed ({s})", .{@errorName(err)});
+        log.warn("parse thread failed ({s})", .{@errorName(err)});
     };
 }
 
@@ -338,7 +340,7 @@ fn parseUsageEntryValue(
         .model = model_slice,
         .usage = usage,
         .is_fallback = false,
-        .display_input_tokens = provider.ParseContext.computeDisplayInput(usage),
+        .display_input_tokens = provider.computeDisplayInput(usage),
     };
 
     if (consumer.mutex) |m| try m.lock(ctx.io);

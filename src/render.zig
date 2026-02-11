@@ -3,6 +3,8 @@ const std = @import("std");
 const model = @import("model.zig");
 const timeutil = @import("time.zig");
 
+const log = std.log.scoped(.render);
+
 pub const Renderer = struct {
     const Alignment = enum { left, right };
     const ColumnId = enum {
@@ -331,7 +333,7 @@ pub const Renderer = struct {
         cells[@intFromEnum(SessionColumnId.session)] = session.session_id;
         cells[@intFromEnum(SessionColumnId.activity)] = if (session.last_activity) |timestamp| blk: {
             break :blk timeutil.formatTimestampForTimezone(io, allocator, timestamp, timezone_offset_minutes) catch |err| {
-                std.log.warn(
+                log.warn(
                     "Failed to format timestamp '{s}' for session '{s}': {s}",
                     .{ timestamp, session.session_id, @errorName(err) },
                 );

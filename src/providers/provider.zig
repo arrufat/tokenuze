@@ -24,7 +24,7 @@ pub const ParseContext = struct {
     cached_counts_overlap_input: bool,
 
     pub fn logWarning(self: ParseContext, file_path: []const u8, message: []const u8, err: anyerror) void {
-        std.log.warn(
+        std.log.scoped(.provider).warn(
             "{s}: {s} '{s}' ({s})",
             .{ self.provider_name, message, file_path, @errorName(err) },
         );
@@ -38,13 +38,6 @@ pub const ParseContext = struct {
             delta.cached_input_tokens;
         delta.input_tokens -= overlap;
         delta.cached_input_tokens = overlap;
-    }
-
-    pub fn computeDisplayInput(usage: model.TokenUsage) u64 {
-        var total = usage.input_tokens;
-        total = std.math.add(u64, total, usage.cache_creation_input_tokens) catch std.math.maxInt(u64);
-        total = std.math.add(u64, total, usage.cached_input_tokens) catch std.math.maxInt(u64);
-        return total;
     }
 
     pub fn captureModel(
@@ -71,6 +64,13 @@ pub const ParseContext = struct {
         return resolveModel(&self, state);
     }
 };
+
+pub fn computeDisplayInput(usage: model.TokenUsage) u64 {
+    var total = usage.input_tokens;
+    total = std.math.add(u64, total, usage.cache_creation_input_tokens) catch std.math.maxInt(u64);
+    total = std.math.add(u64, total, usage.cached_input_tokens) catch std.math.maxInt(u64);
+    return total;
+}
 
 pub const ParseRuntime = struct {
     io: std.Io,
@@ -206,7 +206,7 @@ pub fn updateTimestampFromReader(
 
 pub fn emitUsageEventWithTimestamp(
     io: std.Io,
-    ctx: *const ParseContext,
+    ctx: anytype,
     allocator: std.mem.Allocator,
     state: *ModelState,
     sink: EventSink,
@@ -227,7 +227,7 @@ pub fn emitUsageEventWithTimestamp(
         .model = resolved.name,
         .usage = usage,
         .is_fallback = resolved.is_fallback,
-        .display_input_tokens = ParseContext.computeDisplayInput(usage),
+        .display_input_tokens = computeDisplayInput(usage),
     };
     try sink.emit(io, event);
 }
@@ -466,6 +466,7 @@ pub const ParseSessionFn = *const fn (
 
 pub const ProviderConfig = struct {
     name: []const u8,
+    scope: @EnumLiteral(),
     sessions_dir_suffix: []const u8,
     legacy_fallback_model: ?[]const u8 = null,
     fallback_pricing: []const FallbackPricingEntry = &.{},
@@ -1033,9 +1034,14 @@ fn readNumberValue(allocator: std.mem.Allocator, reader: *std.json.Reader) !f64 
 
 pub fn Provider(comptime cfg: ProviderConfig) type {
     const provider_name = cfg.name;
+
     const sessions_dir_suffix = cfg.sessions_dir_suffix;
+
     const legacy_fallback_model = cfg.legacy_fallback_model;
+
     const fallback_pricing = cfg.fallback_pricing;
+
+    const log = std.log.scoped(cfg.scope);
 
     return struct {
         const parse_context = ParseContext{
@@ -1088,14 +1094,14 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             try collectEvents(ctx, filters, consumer, events_progress);
             const after_events = summaries.eventCount();
             if (events_progress) |node| std.Progress.Node.end(node);
-            std.log.debug(
-                "{s}.collectEvents produced {d} new events in {d}ms",
-                .{ provider_name, after_events - before_events, events_start.durationTo(.now(ctx.io, clock)).toMilliseconds() },
+            log.debug(
+                "collectEvents produced {d} new events in {d}ms",
+                .{ after_events - before_events, events_start.durationTo(.now(ctx.io, clock)).toMilliseconds() },
             );
 
-            std.log.debug(
-                "{s}.collect completed in {d}ms",
-                .{ provider_name, total_start.durationTo(.now(ctx.io, clock)).toMilliseconds() },
+            log.debug(
+                "collect completed in {d}ms",
+                .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()},
             );
         }
 
@@ -1123,9 +1129,9 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         }
 
         fn logSessionWarning(file_path: []const u8, message: []const u8, err: anyerror) void {
-            std.log.warn(
-                "{s}: {s} '{s}' ({s})",
-                .{ provider_name, message, file_path, @errorName(err) },
+            log.warn(
+                "{s} '{s}' ({s})",
+                .{ message, file_path, @errorName(err) },
             );
         }
 
@@ -1149,15 +1155,15 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             };
 
             const sessions_dir = resolveSessionsDir(ctx) catch |err| {
-                std.log.info("{s}.collectEvents: skipping, unable to resolve sessions dir ({s})", .{ provider_name, @errorName(err) });
+                log.info("collectEvents: skipping, unable to resolve sessions dir ({s})", .{@errorName(err)});
                 return;
             };
             defer shared_allocator.free(sessions_dir);
 
             var root_dir = std.Io.Dir.openDirAbsolute(io, sessions_dir, .{ .iterate = true }) catch |err| {
-                std.log.info(
-                    "{s}.collectEvents: skipping, unable to open sessions dir '{s}' ({s})",
-                    .{ provider_name, sessions_dir, @errorName(err) },
+                log.info(
+                    "collectEvents: skipping, unable to open sessions dir '{s}' ({s})",
+                    .{ sessions_dir, @errorName(err) },
                 );
                 return;
             };
@@ -1185,7 +1191,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     std.Progress.Node.setEstimatedTotalItems(node, 0);
                     std.Progress.Node.setCompletedItems(node, 0);
                 }
-                std.log.debug("{s}.collectEvents: scanned 0 files in {d}ms", .{ provider_name, start_time.durationTo(.now(io, clock)).toMilliseconds() });
+                log.debug("collectEvents: scanned 0 files in {d}ms", .{start_time.durationTo(.now(io, clock)).toMilliseconds()});
                 return;
             }
 
@@ -1265,8 +1271,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
                         const relative = shared_ctx.paths[idx];
                         const absolute_path = std.fs.path.join(worker_allocator, &.{ shared_ctx.sessions_dir, relative }) catch |err| {
-                            std.log.warn("{s}.collectEvents: unable to build path for '{s}' ({s})", .{
-                                provider_name,
+                            log.warn("collectEvents: unable to build path for '{s}' ({s})", .{
                                 relative,
                                 @errorName(err),
                             });
@@ -1315,9 +1320,9 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             const final_completed = completed.load(.acquire);
 
-            std.log.debug(
-                "{s}.collectEvents: scanned {d} files in {d}ms",
-                .{ provider_name, final_completed, start_time.durationTo(.now(io, clock)).toMilliseconds() },
+            log.debug(
+                "collectEvents: scanned {d} files in {d}ms",
+                .{ final_completed, start_time.durationTo(.now(io, clock)).toMilliseconds() },
             );
         }
 

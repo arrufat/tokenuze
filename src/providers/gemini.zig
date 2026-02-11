@@ -91,6 +91,7 @@ test "gemini.loadPricingData provides gemini-3-flash-preview fallback" {
 
 const ProviderExports = provider.makeProvider(.{
     .name = "gemini",
+    .scope = .gemini,
     .sessions_dir_suffix = "/.gemini/tmp",
     .legacy_fallback_model = null,
     .fallback_pricing = fallback_pricing[0..],

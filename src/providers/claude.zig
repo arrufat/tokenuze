@@ -19,6 +19,7 @@ const CLAUDE_USAGE_FIELDS = [_]provider.UsageFieldDescriptor{
 
 const ProviderExports = provider.makeProvider(.{
     .name = "claude",
+    .scope = .claude,
     .sessions_dir_suffix = "/.claude/projects",
     .legacy_fallback_model = null,
     .fallback_pricing = &.{},
@@ -141,9 +142,9 @@ const LineHandler = struct {
 
     fn handle(self: *LineHandler, line: []const u8, line_index: usize) !void {
         self.processLine(line) catch |err| {
-            std.log.warn(
-                "{s}: failed to parse claude session file '{s}' line {d} ({s})",
-                .{ self.ctx.provider_name, self.file_path, line_index, @errorName(err) },
+            std.log.scoped(.claude).warn(
+                "failed to parse claude session file '{s}' line {d} ({s})",
+                .{ self.file_path, line_index, @errorName(err) },
             );
         };
     }

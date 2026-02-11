@@ -31,6 +31,8 @@ pub const formatTimezoneLabel = timeutil.formatTimezoneLabel;
 const nsToMs = timeutil.nsToMs;
 pub const uploader = @import("upload.zig");
 
+const log = std.log.scoped(.root);
+
 pub const std_options: std.Options = .{
     // Compile debug logs so they can be enabled dynamically at runtime.
     .log_level = .debug,
@@ -380,7 +382,7 @@ fn logRunStart(ctx: Context, filters: DateFilters, selection: ProviderSelection,
     var provider_buf: [256]u8 = undefined;
     const provider_summary = describeSelectedProviders(selection, &provider_buf);
 
-    std.log.info(
+    log.info(
         "run.start since={s} until={s} tz={s} providers={d} pretty={any} progress={any}",
         .{
             since_label,
@@ -391,7 +393,7 @@ fn logRunStart(ctx: Context, filters: DateFilters, selection: ProviderSelection,
             enable_progress,
         },
     );
-    std.log.debug("run.providers {s}", .{provider_summary.names});
+    log.debug("run.providers {s}", .{provider_summary.names});
 }
 
 fn describeSelectedProviders(selection: ProviderSelection, buffer: []u8) ProviderSelectionSummary {
@@ -539,14 +541,14 @@ fn collectSummaryInternal(
 
     var summaries = summary_builder.items();
     if (summaries.len == 0) {
-        std.log.info("no events to process; total runtime {d}ms", .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()});
+        log.info("no events to process; total runtime {d}ms", .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()});
         if (enable_progress) std.Progress.setStatus(.success);
         return SummaryResult{ .builder = summary_builder, .totals = totals };
     }
 
     try finalizeSummaries(ctx, progress_parent, summaries, pricing_map, &totals, session_recorder);
 
-    std.log.info("phase.total runtime {d}ms", .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()});
+    log.info("phase.total runtime {d}ms", .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()});
     if (enable_progress) std.Progress.setStatus(.success);
 
     return SummaryResult{ .builder = summary_builder, .totals = totals };
@@ -564,7 +566,7 @@ fn collectSelectedProviders(
     for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
         const before_events = summary_builder.eventCount();
-        std.log.debug(
+        log.debug(
             "phase.{s} starting (events_before={d})",
             .{ prov.phase_label, before_events },
         );
@@ -580,7 +582,7 @@ fn collectSelectedProviders(
                 .total_events = summary_builder.eventCount(),
             };
         };
-        std.log.info(
+        log.info(
             "phase.{s} completed in {d}ms (events += {d}, total_events={d})",
             .{
                 prov.phase_label,
@@ -617,7 +619,7 @@ fn finalizeSummaries(
         }
         break :blk pricing_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     };
-    std.log.debug(
+    log.debug(
         "phase.apply_pricing completed in {d}ms (days={d})",
         .{ pricing_elapsed, summaries.len },
     );
@@ -633,7 +635,7 @@ fn finalizeSummaries(
         std.sort.pdq(DailySummary, summaries, {}, summaryLessThan);
         break :blk sort_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     };
-    std.log.debug(
+    log.debug(
         "phase.sort_days completed in {d}ms (days={d})",
         .{ sort_elapsed, summaries.len },
     );
@@ -646,7 +648,7 @@ fn finalizeSummaries(
         try model.collectMissingModels(ctx.allocator, &missing_set, &totals.missing_pricing);
         break :blk totals_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     };
-    std.log.debug(
+    log.debug(
         "phase.totals completed in {d}ms (missing_pricing={d})",
         .{ totals_elapsed, totals.missing_pricing.items.len },
     );
@@ -662,30 +664,30 @@ fn loadPricing(
     const start_time: std.Io.Timestamp = .now(ctx.io, clock);
     const pricing_node = startProgressNode(progress_parent, "load pricing", 0);
     defer finishProgressNode(pricing_node);
-    std.log.debug("pricing.load begin (selection_mask=0x{x})", .{selection.mask});
+    log.debug("pricing.load begin (selection_mask=0x{x})", .{selection.mask});
 
     const before_models = pricing.count();
     const remote_stats = try provider.loadRemotePricing(ctx, pricing);
     if (remote_stats.attempted) {
         if (remote_stats.failure) |err| {
-            std.log.warn(
+            log.warn(
                 "pricing.remote_fetch failed after {d:.2}ms ({s})",
                 .{ remote_stats.elapsed_ms, @errorName(err) },
             );
         } else {
-            std.log.debug(
+            log.debug(
                 "pricing.remote_fetch completed in {d:.2}ms (models += {d})",
                 .{ remote_stats.elapsed_ms, remote_stats.models_added },
             );
         }
     } else {
-        std.log.debug("pricing.remote_fetch skipped (already loaded)", .{});
+        log.debug("pricing.remote_fetch skipped (already loaded)", .{});
     }
 
     const fallback_start: std.Io.Timestamp = .now(ctx.io, clock);
     for (providers, 0..) |prov, idx| {
         if (!selection.includesIndex(idx)) continue;
-        std.log.debug(
+        log.debug(
             "pricing.{s}.fallback start (models={d})",
             .{ prov.name, pricing.count() },
         );
@@ -693,12 +695,12 @@ fn loadPricing(
     }
     const fallback_elapsed = fallback_start.durationTo(.now(ctx.io, clock)).toMilliseconds();
     const fallback_added = pricing.count() - (before_models + remote_stats.models_added);
-    std.log.debug(
+    log.debug(
         "pricing.fallback ensured in {d}ms (models += {d})",
         .{ fallback_elapsed, fallback_added },
     );
 
-    std.log.info(
+    log.info(
         "phase.load_pricing completed in {d}ms (models={d}, models_added={d})",
         .{ start_time.durationTo(.now(ctx.io, clock)).toMilliseconds(), pricing.count(), pricing.count() - before_models },
     );

@@ -8,6 +8,7 @@ const fallback_pricing = [_]provider.FallbackPricingEntry{};
 
 const ProviderExports = provider.makeProvider(.{
     .name = "amp",
+    .scope = .amp,
     .sessions_dir_suffix = "/.local/share/amp/threads",
     .session_file_ext = ".json",
     .legacy_fallback_model = null,

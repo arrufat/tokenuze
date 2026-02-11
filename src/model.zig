@@ -3,6 +3,8 @@ const std = @import("std");
 const io_util = @import("io_util.zig");
 const timeutil = @import("time.zig");
 
+const log = std.log.scoped(.model);
+
 pub const million = 1_000_000.0;
 pub const pricing_url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
@@ -960,7 +962,7 @@ fn tryCachePricingAlias(
     pricing: ModelPricing,
 ) void {
     cachePricingAlias(allocator, pricing_map, alias, pricing) catch |err| {
-        std.log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias, @errorName(err) });
+        log.warn("Failed to cache pricing alias for '{s}': {s}", .{ alias, @errorName(err) });
     };
 }
 

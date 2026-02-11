@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const log = std.log.scoped(.http);
+
 pub const ResponseHandler = *const fn (?*anyopaque, []const u8) anyerror!void;
 
 pub const RequestOptions = struct {
@@ -71,7 +73,7 @@ fn sendWithFallback(
     return sendRequest(response_allocator, client, uri, options, null) catch |err| {
         if (err != error.InvalidDnsCnameRecord) return err;
 
-        std.log.warn("DNS resolver failed for {s}; retrying with libc resolver", .{host_name.bytes});
+        log.warn("DNS resolver failed for {s}; retrying with libc resolver", .{host_name.bytes});
         const connection = try connectWithLibcResolver(scratch_allocator, client, uri, protocol, host_name) orelse return err;
         return sendRequest(response_allocator, client, uri, options, connection);
     };

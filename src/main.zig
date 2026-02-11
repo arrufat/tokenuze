@@ -7,6 +7,8 @@ pub const std_options: std.Options = tokenuze.std_options;
 
 const cli = @import("cli.zig");
 
+const log = std.log.scoped(.main);
+
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub fn main(init: std.process.Init) !void {
@@ -79,7 +81,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         if (uploads.items.len == 0) {
-            std.log.err("No providers selected for upload; use --agent to pick at least one provider.", .{});
+            log.err("No providers selected for upload; use --agent to pick at least one provider.", .{});
             return;
         }
 

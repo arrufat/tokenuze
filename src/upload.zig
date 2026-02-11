@@ -8,6 +8,8 @@ const io_util = @import("io_util.zig");
 const machine_id = @import("machine_id.zig");
 const timeutil = @import("time.zig");
 
+const log = std.log.scoped(.upload);
+
 pub const ProviderUpload = struct {
     name: []const u8,
     daily_summary: []const u8,
@@ -38,7 +40,7 @@ pub fn run(
 
     const machine = try machine_id.getMachineId(ctx);
     const machine_slice = machine[0..];
-    std.log.debug("Machine ID: {s}", .{machine_slice});
+    log.debug("Machine ID: {s}", .{machine_slice});
 
     if (providers.len == 0) return error.NoProvidersSelected;
 
@@ -48,17 +50,17 @@ pub fn run(
     const payload = try buildUploadPayload(ctx, machine_slice, providers, timezone_label);
     defer ctx.allocator.free(payload);
 
-    std.log.info("Uploading summary to {s}...", .{endpoint});
+    log.info("Uploading summary to {s}...", .{endpoint});
     const clock: std.Io.Clock = .awake;
     const start_time: std.Io.Timestamp = .now(ctx.io, clock);
     var response = sendPayload(ctx.allocator, endpoint, env_cfg.api_key, payload) catch |err| {
-        std.log.err("Connection failed. Is the server running at {s}? ({s})", .{ env_cfg.api_url, @errorName(err) });
+        log.err("Connection failed. Is the server running at {s}? ({s})", .{ env_cfg.api_url, @errorName(err) });
         return err;
     };
     defer response.deinit();
 
     try handleResponse(response);
-    std.log.info("Usage reported successfully in {d}ms", .{start_time.durationTo(.now(ctx.io, clock)).toMilliseconds()});
+    log.info("Usage reported successfully in {d}ms", .{start_time.durationTo(.now(ctx.io, clock)).toMilliseconds()});
 }
 
 const EnvConfig = struct {
@@ -148,7 +150,7 @@ fn buildUploadPayload(
         .timezone = timezone_label,
         .providers = providers,
     };
-    std.log.debug("Payload timestamp (UTC): {s} | timezone: {s}", .{ timestamp, timezone_label });
+    log.debug("Payload timestamp (UTC): {s} | timezone: {s}", .{ timestamp, timezone_label });
 
     var buffer = std.ArrayList(u8).empty;
     defer buffer.deinit(ctx.allocator);
@@ -168,19 +170,19 @@ fn handleResponse(response: HttpResponse) UploadError!void {
     switch (response.status) {
         .ok => {},
         .unauthorized => {
-            std.log.err("Authentication failed: Invalid or inactive API key", .{});
+            log.err("Authentication failed: Invalid or inactive API key", .{});
             return UploadError.Unauthorized;
         },
         .unprocessable_entity => {
-            std.log.err("Data validation error. See server logs for details.", .{});
+            log.err("Data validation error. See server logs for details.", .{});
             return UploadError.ValidationFailed;
         },
         .internal_server_error => {
-            std.log.err("Server error. Please try again later.", .{});
+            log.err("Server error. Please try again later.", .{});
             return UploadError.ServerError;
         },
         else => {
-            std.log.err("Failed to report usage (HTTP {d}). Check server logs for diagnostics.", .{@intFromEnum(response.status)});
+            log.err("Failed to report usage (HTTP {d}). Check server logs for diagnostics.", .{@intFromEnum(response.status)});
             return UploadError.UnexpectedResponse;
         },
     }
