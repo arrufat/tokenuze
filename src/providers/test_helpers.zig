@@ -45,9 +45,7 @@ pub fn runFixtureParse(
         []const u8,
     ) anyerror!void,
 ) !usize {
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
+    const io = std.testing.io;
 
     const json_payload = try std.Io.Dir.cwd().readFileAlloc(
         io,

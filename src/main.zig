@@ -124,7 +124,7 @@ fn handleSessionsOutput(ctx: tokenuze.Context, options: cli.CliOptions) !void {
 
     if (options.filters.output_format == .table) {
         const tz_offset: i32 = @intCast(options.filters.timezone_offset_minutes);
-        try tokenuze.renderSessionsTable(writer, ctx.allocator, &recorder, tz_offset);
+        try tokenuze.renderSessionsTable(ctx.io, writer, ctx.allocator, &recorder, tz_offset);
     } else {
         const json = try recorder.renderJson(ctx.allocator, options.filters.pretty_output);
         defer ctx.allocator.free(json);

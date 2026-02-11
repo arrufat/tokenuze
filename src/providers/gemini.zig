@@ -73,8 +73,7 @@ test "gemini.loadPricingData provides gemini-3-flash-preview fallback" {
     const allocator = std.testing.allocator;
     var pricing = model.PricingMap.init(allocator);
     defer model.deinitPricingMap(&pricing, allocator);
-    var io: std.Io.Threaded = .init_single_threaded;
-    defer io.deinit();
+    const io = std.testing.io;
 
     var env_map: std.process.Environ.Map = .init(allocator);
     defer env_map.deinit();
@@ -82,7 +81,7 @@ test "gemini.loadPricingData provides gemini-3-flash-preview fallback" {
     const ctx: Context = .{
         .allocator = allocator,
         .temp_allocator = allocator,
-        .io = io.io(),
+        .io = io,
         .environ_map = &env_map,
     };
 
@@ -191,6 +190,7 @@ fn parseSessionFile(
                     usage_raw.reasoning_output_tokens;
 
                 const timestamp_info = (try provider.timestampFromSlice(
+                    self.io,
                     self.allocator,
                     ts,
                     self.timezone_offset_minutes,
@@ -267,9 +267,8 @@ test "gemini parser converts message totals into usage deltas" {
         .legacy_fallback_model = null,
         .cached_counts_overlap_input = false,
     };
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const runtime = provider.ParseRuntime{ .io = io_single.io() };
+    const io = std.testing.io;
+    const runtime = provider.ParseRuntime{ .io = io };
 
     try parseSessionFile(
         worker_allocator,

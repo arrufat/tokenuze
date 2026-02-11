@@ -287,7 +287,7 @@ fn parseRow(ctx: Context, filters: model.DateFilters, consumer: provider.EventCo
 
     if (prompt_tokens == 0 and completion_tokens == 0) return;
 
-    const timestamp_info = (try provider.timestampFromSlice(ctx.allocator, timestamp_str, filters.timezone_offset_minutes)) orelse return;
+    const timestamp_info = (try provider.timestampFromSlice(ctx.io, ctx.allocator, timestamp_str, filters.timezone_offset_minutes)) orelse return;
     defer ctx.allocator.free(timestamp_info.text);
 
     const usage = model.TokenUsage{

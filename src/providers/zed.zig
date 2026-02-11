@@ -287,7 +287,7 @@ fn parseRequestUsageValue(
         .object => |o| o,
         else => return,
     };
-    const timestamp_info = (try provider.timestampFromSlice(ctx.allocator, updated_at, filters.timezone_offset_minutes)) orelse return;
+    const timestamp_info = (try provider.timestampFromSlice(ctx.io, ctx.allocator, updated_at, filters.timezone_offset_minutes)) orelse return;
     defer ctx.allocator.free(timestamp_info.text);
 
     var it = obj.iterator();

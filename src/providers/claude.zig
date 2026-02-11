@@ -181,6 +181,7 @@ fn parseClaudeRecordField(
     }
     if (std.mem.eql(u8, key, "timestamp")) {
         try provider.updateTimestampFromReader(
+            builder.handler.io,
             builder.handler.allocator,
             reader,
             builder.handler.timezone_offset_minutes,
@@ -278,9 +279,8 @@ test "claude parser emits assistant usage events and respects overrides" {
         .legacy_fallback_model = null,
         .cached_counts_overlap_input = false,
     };
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const runtime = provider.ParseRuntime{ .io = io_single.io() };
+    const io = std.testing.io;
+    const runtime = provider.ParseRuntime{ .io = io };
 
     try parseClaudeSessionFile(
         worker_allocator,

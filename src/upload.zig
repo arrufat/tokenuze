@@ -43,7 +43,7 @@ pub fn run(
     if (providers.len == 0) return error.NoProvidersSelected;
 
     var tz_label_buf: [16]u8 = undefined;
-    const timezone_label = timeutil.formatTimezoneLabel(&tz_label_buf, timezone_offset_minutes);
+    const timezone_label = timeutil.formatTimezoneLabel(ctx.io, &tz_label_buf, timezone_offset_minutes);
 
     const payload = try buildUploadPayload(ctx, machine_slice, providers, timezone_label);
     defer ctx.allocator.free(payload);
@@ -128,7 +128,7 @@ fn buildUploadPayload(
     providers: []const ProviderUpload,
     timezone_label: []const u8,
 ) ![]u8 {
-    const timestamp = try timeutil.currentTimestampIso8601(ctx.allocator);
+    const timestamp = try timeutil.currentTimestampIso8601(ctx.io, ctx.allocator);
     defer ctx.allocator.free(timestamp);
 
     const hostname = try identity.getHostname(ctx);

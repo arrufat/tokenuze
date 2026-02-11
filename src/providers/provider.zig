@@ -179,12 +179,13 @@ pub const TimestampInfo = struct {
 };
 
 pub fn timestampFromSlice(
+    io: std.Io,
     allocator: std.mem.Allocator,
     slice: []const u8,
     timezone_offset_minutes: i32,
 ) !?TimestampInfo {
     const duplicate = try duplicateNonEmpty(allocator, slice) orelse return null;
-    const iso_date = timeutil.isoDateForTimezone(duplicate, timezone_offset_minutes) catch {
+    const iso_date = timeutil.isoDateForTimezone(io, duplicate, timezone_offset_minutes) catch {
         allocator.free(duplicate);
         return null;
     };
@@ -192,6 +193,7 @@ pub fn timestampFromSlice(
 }
 
 pub fn updateTimestampFromReader(
+    io: std.Io,
     allocator: std.mem.Allocator,
     reader: *std.json.Reader,
     timezone_offset_minutes: i32,
@@ -199,7 +201,7 @@ pub fn updateTimestampFromReader(
 ) !void {
     var token = try jsonReadStringToken(allocator, reader);
     defer token.deinit(allocator);
-    const info = try timestampFromSlice(allocator, token.view(), timezone_offset_minutes) orelse return;
+    const info = try timestampFromSlice(io, allocator, token.view(), timezone_offset_minutes) orelse return;
     if (slot.*) |existing| allocator.free(existing.text);
     slot.* = info;
 }
@@ -1405,7 +1407,9 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             defer arena.deinit();
             const allocator = arena.allocator();
 
-            const info = try timestampFromSlice(allocator, "2025-02-15T09:30:00Z", 0) orelse unreachable;
+            const io = std.testing.io;
+
+            const info = try timestampFromSlice(io, allocator, "2025-02-15T09:30:00Z", 0) orelse unreachable;
             try std.testing.expectEqualStrings("2025-02-15", info.local_iso_date[0..]);
         }
 

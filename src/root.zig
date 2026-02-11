@@ -237,7 +237,7 @@ pub fn run(
 
 pub fn runWithContext(ctx: Context, filters: DateFilters, selection: ProviderSelection) !void {
     const enable_progress = std.Io.File.stdout().isTty(ctx.io) catch false;
-    logRunStart(filters, selection, enable_progress);
+    logRunStart(ctx, filters, selection, enable_progress);
     var summary = try collectSummary(ctx, filters, selection, enable_progress);
     defer summary.deinit(ctx.allocator);
 
@@ -267,12 +267,13 @@ pub fn renderSummaryAlloc(
 }
 
 pub fn renderSessionsTable(
+    io: std.Io,
     writer: *std.Io.Writer,
     allocator: std.mem.Allocator,
     recorder: *const model.SessionRecorder,
     timezone_offset_minutes: i32,
 ) !void {
-    try render.Renderer.writeSessionsTable(writer, allocator, recorder, timezone_offset_minutes);
+    try render.Renderer.writeSessionsTable(io, writer, allocator, recorder, timezone_offset_minutes);
 }
 
 pub fn renderSessionsAlloc(
@@ -370,9 +371,9 @@ const ProviderSelectionSummary = struct {
     count: usize,
 };
 
-fn logRunStart(filters: DateFilters, selection: ProviderSelection, enable_progress: bool) void {
+fn logRunStart(ctx: Context, filters: DateFilters, selection: ProviderSelection, enable_progress: bool) void {
     var tz_buf: [16]u8 = undefined;
-    const tz_label = formatTimezoneLabel(&tz_buf, filters.timezone_offset_minutes);
+    const tz_label = formatTimezoneLabel(ctx.io, &tz_buf, filters.timezone_offset_minutes);
     const since_label = if (filters.since) |since| since[0..] else "any";
     const until_label = if (filters.until) |until| until[0..] else "any";
 

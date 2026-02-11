@@ -178,6 +178,7 @@ const MessageRecord = struct {
         defer self.allocator.free(iso);
 
         const timestamp_info = (try provider.timestampFromSlice(
+            self.io,
             self.allocator,
             iso,
             self.timezone_offset_minutes,
@@ -399,9 +400,7 @@ fn parseMessageFileTestWrapper(
     timezone_offset_minutes: i32,
     sink: provider.EventSink,
 ) !void {
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
+    const io = std.testing.io;
 
     const ctx = provider.ParseContext{
         .provider_name = "opencode-test",
@@ -473,9 +472,7 @@ test "opencode message parser handles large documents" {
     const large_payload = try worker_allocator.alloc(u8, large_len);
     @memset(large_payload, 'a');
 
-    var io_single = std.Io.Threaded.init_single_threaded;
-    defer io_single.deinit();
-    const io = io_single.io();
+    const io = std.testing.io;
 
     var msg_file = try tmp.dir.createFile(io, "msg_large.json", .{});
     defer msg_file.close(io);

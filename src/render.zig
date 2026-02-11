@@ -182,6 +182,7 @@ pub const Renderer = struct {
     }
 
     pub fn writeSessionsTable(
+        io: std.Io,
         writer: *std.Io.Writer,
         allocator: std.mem.Allocator,
         recorder: *const model.SessionRecorder,
@@ -214,7 +215,7 @@ pub const Renderer = struct {
 
         var rows = try arena.alloc(SessionRow, sessions.items.len);
         for (sessions.items, 0..) |session, idx| {
-            rows[idx] = try formatSessionRow(arena, session, timezone_offset_minutes);
+            rows[idx] = try formatSessionRow(io, arena, session, timezone_offset_minutes);
             updateWidths(widths[0..], rows[idx].cells[0..], column_usage[0..]);
         }
 
@@ -321,6 +322,7 @@ pub const Renderer = struct {
     };
 
     fn formatSessionRow(
+        io: std.Io,
         allocator: std.mem.Allocator,
         session: *const model.SessionRecorder.SessionEntry,
         timezone_offset_minutes: i32,
@@ -328,7 +330,7 @@ pub const Renderer = struct {
         var cells: [session_column_count][]const u8 = undefined;
         cells[@intFromEnum(SessionColumnId.session)] = session.session_id;
         cells[@intFromEnum(SessionColumnId.activity)] = if (session.last_activity) |timestamp| blk: {
-            break :blk timeutil.formatTimestampForTimezone(allocator, timestamp, timezone_offset_minutes) catch |err| {
+            break :blk timeutil.formatTimestampForTimezone(io, allocator, timestamp, timezone_offset_minutes) catch |err| {
                 std.log.warn(
                     "Failed to format timestamp '{s}' for session '{s}': {s}",
                     .{ timestamp, session.session_id, @errorName(err) },
@@ -569,7 +571,9 @@ pub const Renderer = struct {
         var stream = std.io.fixedBufferStream(&buffer);
         const writer = &stream.writer();
 
-        try Renderer.writeSessionsTable(writer, allocator, &recorder, 0);
+        const io = std.testing.io;
+
+        try Renderer.writeSessionsTable(io, writer, allocator, &recorder, 0);
         const out = stream.getWritten();
         try std.testing.expect(std.mem.find(u8, out, "s1") != null);
         try std.testing.expect(std.mem.find(u8, out, "$1.23") != null);
@@ -591,7 +595,9 @@ pub const Renderer = struct {
         var stream = std.io.fixedBufferStream(&buffer);
         const writer = &stream.writer();
 
-        try Renderer.writeSessionsTable(writer, allocator, &recorder, -5 * 60);
+        const io = std.testing.io;
+
+        try Renderer.writeSessionsTable(io, writer, allocator, &recorder, -5 * 60);
         const out = stream.getWritten();
         try std.testing.expect(std.mem.find(u8, out, "2025-02-15 13:30:00 UTC-05:00") != null);
     }
