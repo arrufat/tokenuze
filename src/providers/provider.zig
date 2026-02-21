@@ -470,6 +470,7 @@ pub const ProviderConfig = struct {
     legacy_fallback_model: ?[]const u8 = null,
     fallback_pricing: []const FallbackPricingEntry = &.{},
     session_file_ext: []const u8 = ".jsonl",
+    extra_session_file_suffixes: []const []const u8 = &.{},
     parse_session_fn: ParseSessionFn,
     cached_counts_overlap_input: bool = false,
     requires_deduper: bool = false,
@@ -1050,6 +1051,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
         };
         const parse_fn = cfg.parse_session_fn;
         const json_ext = cfg.session_file_ext;
+        const extra_session_file_suffixes = cfg.extra_session_file_suffixes;
         const requires_deduper = cfg.requires_deduper;
 
         const SummaryConsumer = struct {
@@ -1177,6 +1179,12 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 relative_paths.deinit(shared_allocator);
             }
 
+            var extra_paths: std.ArrayList([]u8) = .empty;
+            defer {
+                for (extra_paths.items) |path| shared_allocator.free(path);
+                extra_paths.deinit(shared_allocator);
+            }
+
             while (try walker.next(io)) |entry| {
                 if (entry.kind != .file) continue;
                 const relative_path = std.mem.sliceTo(entry.path, 0);
@@ -1185,7 +1193,29 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 try relative_paths.append(shared_allocator, copy);
             }
 
-            if (relative_paths.items.len == 0) {
+            const home = ctx.environ_map.get("HOME") orelse "";
+            if (home.len > 0) {
+                for (extra_session_file_suffixes) |suffix| {
+                    const absolute_path = std.fmt.allocPrint(shared_allocator, "{s}{s}", .{ home, suffix }) catch |err| {
+                        log.warn("collectEvents: unable to build extra session file path for '{s}' ({s})", .{ suffix, @errorName(err) });
+                        continue;
+                    };
+
+                    const file = std.Io.Dir.openFileAbsolute(io, absolute_path, .{}) catch |err| {
+                        switch (err) {
+                            error.FileNotFound, error.NotDir => {},
+                            else => log.warn("collectEvents: unable to open extra session file '{s}' ({s})", .{ absolute_path, @errorName(err) }),
+                        }
+                        shared_allocator.free(absolute_path);
+                        continue;
+                    };
+                    file.close(io);
+                    try extra_paths.append(shared_allocator, absolute_path);
+                }
+            }
+
+            const total_paths = relative_paths.items.len + extra_paths.items.len;
+            if (total_paths == 0) {
                 if (progress) |node| {
                     std.Progress.Node.setEstimatedTotalItems(node, 0);
                     std.Progress.Node.setCompletedItems(node, 0);
@@ -1196,7 +1226,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             var completed = std.atomic.Value(usize).init(0);
             if (progress) |node| {
-                std.Progress.Node.setEstimatedTotalItems(node, relative_paths.items.len);
+                std.Progress.Node.setEstimatedTotalItems(node, total_paths);
                 std.Progress.Node.setCompletedItems(node, 0);
             }
 
@@ -1220,6 +1250,23 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
             const timezone_offset = @as(i32, filters.timezone_offset_minutes);
 
+            const sink = EventSink{
+                .context = &shared,
+                .emitFn = struct {
+                    fn emit(ctx_ptr: *anyopaque, emit_io: std.Io, event: model.TokenUsageEvent) anyerror!void {
+                        const local_ctx: *SharedContext = @ptrCast(@alignCast(ctx_ptr));
+                        if (local_ctx.consumer.mutex) |mutex| try mutex.lock(emit_io);
+                        defer if (local_ctx.consumer.mutex) |mutex| mutex.unlock(emit_io);
+                        try local_ctx.consumer.ingest(
+                            local_ctx.consumer.context,
+                            local_ctx.shared_allocator,
+                            &event,
+                            local_ctx.filters,
+                        );
+                    }
+                }.emit,
+            };
+
             var group = std.Io.Group.init;
 
             const worker_count = blk: {
@@ -1235,6 +1282,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 work_index: *std.atomic.Value(usize),
                 timezone_offset: i32,
                 io: std.Io,
+                sink: EventSink,
             };
 
             const TaskFn = struct {
@@ -1244,23 +1292,6 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                     var worker_arena_state = std.heap.ArenaAllocator.init(shared_ctx.temp_allocator);
                     defer worker_arena_state.deinit();
                     const worker_allocator = worker_arena_state.allocator();
-
-                    const sink = EventSink{
-                        .context = shared_ctx,
-                        .emitFn = struct {
-                            fn emit(ctx_ptr: *anyopaque, emit_io: std.Io, event: model.TokenUsageEvent) anyerror!void {
-                                const local_ctx: *SharedContext = @ptrCast(@alignCast(ctx_ptr));
-                                if (local_ctx.consumer.mutex) |mutex| try mutex.lock(emit_io);
-                                defer if (local_ctx.consumer.mutex) |mutex| mutex.unlock(emit_io);
-                                try local_ctx.consumer.ingest(
-                                    local_ctx.consumer.context,
-                                    local_ctx.shared_allocator,
-                                    &event,
-                                    local_ctx.filters,
-                                );
-                            }
-                        }.emit,
-                    };
 
                     while (true) {
                         const idx = args.work_index.fetchAdd(1, .acq_rel);
@@ -1292,7 +1323,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                             absolute_path,
                             shared_ctx.deduper,
                             args.timezone_offset,
-                            sink,
+                            args.sink,
                         ) catch |err| {
                             logSessionWarning(absolute_path, "failed to parse session file", err);
                             continue;
@@ -1309,6 +1340,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
                 .work_index = &work_index,
                 .timezone_offset = timezone_offset,
                 .io = io,
+                .sink = sink,
             };
 
             for (0..worker_count) |_| {
@@ -1316,6 +1348,39 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             }
 
             try group.await(io);
+
+            if (extra_paths.items.len > 0) {
+                var extra_arena_state = std.heap.ArenaAllocator.init(temp_allocator);
+                defer extra_arena_state.deinit();
+                const extra_allocator = extra_arena_state.allocator();
+
+                for (extra_paths.items) |absolute_path| {
+                    _ = extra_arena_state.reset(.retain_capacity);
+
+                    const basename = std.fs.path.basename(absolute_path);
+                    const session_slice = std.fs.path.stem(basename);
+                    const maybe_session_id = duplicateNonEmpty(extra_allocator, session_slice) catch {
+                        continue;
+                    };
+                    const session_id = maybe_session_id orelse continue;
+
+                    parseSessionFile(
+                        extra_allocator,
+                        io,
+                        session_id,
+                        absolute_path,
+                        shared.deduper,
+                        timezone_offset,
+                        sink,
+                    ) catch |err| {
+                        logSessionWarning(absolute_path, "failed to parse extra session file", err);
+                        continue;
+                    };
+
+                    const finished = shared.completed.fetchAdd(1, .acq_rel) + 1;
+                    if (shared.progress) |node| node.setCompletedItems(finished);
+                }
+            }
 
             const final_completed = completed.load(.acquire);
 
