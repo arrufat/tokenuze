@@ -6,7 +6,7 @@ The output is a table or JSON, suitable for dashboards.
 
 ## Requirements
 - Zig 0.16.0-dev.1976+8e091047b or newer (if building from source)
-- `sqlite3` in your `PATH` (for Zed and Crush providers)
+- `sqlite3` in your `PATH` (for Zed, Crush, and Opencode providers)
 - Network access to fetch remote pricing / uploading stats (optional)
 
 ## Supported Providers
