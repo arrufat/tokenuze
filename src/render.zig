@@ -613,7 +613,7 @@ pub const Renderer = struct {
     }
 
     test "writeRow respects alignment and widths" {
-        var list = std.ArrayList(u8){};
+        var list: std.ArrayList(u8) = .empty;
         defer list.deinit(std.testing.allocator);
 
         const columns = [_]Column{
