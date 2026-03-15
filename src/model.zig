@@ -343,8 +343,8 @@ pub const DailySummary = struct {
     usage: TokenUsage,
     display_input_tokens: u64,
     cost_usd: f64,
-    models: std.ArrayListUnmanaged(ModelSummary),
-    missing_pricing: std.ArrayListUnmanaged([]const u8),
+    models: std.ArrayList(ModelSummary),
+    missing_pricing: std.ArrayList([]const u8),
 
     pub fn init(allocator: std.mem.Allocator, iso_date: []const u8, display_date: []const u8) DailySummary {
         _ = allocator;
@@ -354,8 +354,8 @@ pub const DailySummary = struct {
             .usage = .{},
             .display_input_tokens = 0,
             .cost_usd = 0,
-            .models = .{},
-            .missing_pricing = .{},
+            .models = .empty,
+            .missing_pricing = .empty,
         };
     }
 
@@ -374,14 +374,14 @@ pub const SummaryTotals = struct {
     usage: TokenUsage = .{},
     display_input_tokens: u64 = 0,
     cost_usd: f64 = 0,
-    missing_pricing: std.ArrayListUnmanaged([]const u8),
+    missing_pricing: std.ArrayList([]const u8),
 
     pub fn init() SummaryTotals {
         return .{
             .usage = .{},
             .display_input_tokens = 0,
             .cost_usd = 0,
-            .missing_pricing = .{},
+            .missing_pricing = .empty,
         };
     }
 
@@ -486,8 +486,8 @@ pub const SessionRecorder = struct {
     pub fn sortedSessions(
         self: *const SessionRecorder,
         allocator: std.mem.Allocator,
-    ) !std.ArrayListUnmanaged(*const SessionEntry) {
-        var list = std.ArrayListUnmanaged(*const SessionEntry){};
+    ) !std.ArrayList(*const SessionEntry) {
+        var list: std.ArrayList(*const SessionEntry) = .empty;
         errdefer list.deinit(allocator);
         var iterator = self.sessions.iterator();
         while (iterator.next()) |entry| {
@@ -580,7 +580,7 @@ pub const SessionRecorder = struct {
         session_file: []const u8,
         last_activity: ?[]const u8 = null,
         usage: TokenUsage = .{},
-        models: std.ArrayListUnmanaged(SessionModel) = .{},
+        models: std.ArrayList(SessionModel) = .empty,
         cost_usd: f64 = 0,
 
         fn init(session_id: []const u8, directory: []const u8, session_file: []const u8) SessionEntry {
@@ -590,7 +590,7 @@ pub const SessionRecorder = struct {
                 .session_file = session_file,
                 .last_activity = null,
                 .usage = .{},
-                .models = .{},
+                .models = .empty,
                 .cost_usd = 0,
             };
         }
@@ -717,14 +717,14 @@ pub const SessionRecorder = struct {
 };
 
 pub const SummaryBuilder = struct {
-    summaries: std.ArrayListUnmanaged(DailySummary) = .{},
+    summaries: std.ArrayList(DailySummary) = .empty,
     date_index: std.StringHashMap(usize),
     event_count: usize = 0,
     session_recorder: ?*SessionRecorder = null,
 
     pub fn init(allocator: std.mem.Allocator) SummaryBuilder {
         return .{
-            .summaries = .{},
+            .summaries = .empty,
             .date_index = std.StringHashMap(usize).init(allocator),
             .event_count = 0,
             .session_recorder = null,
@@ -1057,7 +1057,7 @@ pub fn accumulateTotals(
 pub fn collectMissingModels(
     allocator: std.mem.Allocator,
     missing_set: *std.StringHashMap(u8),
-    output: *std.ArrayListUnmanaged([]const u8),
+    output: *std.ArrayList([]const u8),
 ) !void {
     var iterator = missing_set.iterator();
     while (iterator.next()) |entry| {
@@ -1134,7 +1134,7 @@ fn subtractPositive(current: u64, previous: u64) u64 {
 
 fn appendUniqueString(
     allocator: std.mem.Allocator,
-    list: *std.ArrayListUnmanaged([]const u8),
+    list: *std.ArrayList([]const u8),
     value: []const u8,
 ) !void {
     for (list.items) |existing| {

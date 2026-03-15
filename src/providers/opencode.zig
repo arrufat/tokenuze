@@ -645,60 +645,60 @@ fn parseMessageFileTestWrapper(
 }
 
 fn sqliteRowsFixtureJson() []const u8 {
-    return
-        \\[
-        \\  {
-        \\    "message_id": "msg_builder",
-        \\    "session_id": "ses_fixture_one",
-        \\    "timestamp_ms": 1759302005000,
-        \\    "model_name": "grok-code",
-        \\    "input_tokens": 1200,
-        \\    "output_tokens": 200,
-        \\    "reasoning_tokens": 50,
-        \\    "cache_read_tokens": 300,
-        \\    "cache_write_tokens": 100
-        \\  },
-        \\  {
-        \\    "message_id": "msg_nested",
-        \\    "session_id": "ses_fixture_one",
-        \\    "timestamp_ms": 1759302600000,
-        \\    "model_name": "scout-preview",
-        \\    "input_tokens": 400,
-        \\    "output_tokens": 80,
-        \\    "reasoning_tokens": 0,
-        \\    "cache_read_tokens": 0,
-        \\    "cache_write_tokens": 0
-        \\  }
-        \\]
+    return 
+    \\[
+    \\  {
+    \\    "message_id": "msg_builder",
+    \\    "session_id": "ses_fixture_one",
+    \\    "timestamp_ms": 1759302005000,
+    \\    "model_name": "grok-code",
+    \\    "input_tokens": 1200,
+    \\    "output_tokens": 200,
+    \\    "reasoning_tokens": 50,
+    \\    "cache_read_tokens": 300,
+    \\    "cache_write_tokens": 100
+    \\  },
+    \\  {
+    \\    "message_id": "msg_nested",
+    \\    "session_id": "ses_fixture_one",
+    \\    "timestamp_ms": 1759302600000,
+    \\    "model_name": "scout-preview",
+    \\    "input_tokens": 400,
+    \\    "output_tokens": 80,
+    \\    "reasoning_tokens": 0,
+    \\    "cache_read_tokens": 0,
+    \\    "cache_write_tokens": 0
+    \\  }
+    \\]
     ;
 }
 
 fn sqliteRowsSameMessageZeroThenNonZeroJson() []const u8 {
-    return
-        \\[
-        \\  {
-        \\    "message_id": "msg_same",
-        \\    "session_id": "ses_fixture_one",
-        \\    "timestamp_ms": 1759302005000,
-        \\    "model_name": "grok-code",
-        \\    "input_tokens": 0,
-        \\    "output_tokens": 0,
-        \\    "reasoning_tokens": 0,
-        \\    "cache_read_tokens": 0,
-        \\    "cache_write_tokens": 0
-        \\  },
-        \\  {
-        \\    "message_id": "msg_same",
-        \\    "session_id": "ses_fixture_one",
-        \\    "timestamp_ms": 1759302600000,
-        \\    "model_name": "grok-code",
-        \\    "input_tokens": 10,
-        \\    "output_tokens": 2,
-        \\    "reasoning_tokens": 1,
-        \\    "cache_read_tokens": 3,
-        \\    "cache_write_tokens": 0
-        \\  }
-        \\]
+    return 
+    \\[
+    \\  {
+    \\    "message_id": "msg_same",
+    \\    "session_id": "ses_fixture_one",
+    \\    "timestamp_ms": 1759302005000,
+    \\    "model_name": "grok-code",
+    \\    "input_tokens": 0,
+    \\    "output_tokens": 0,
+    \\    "reasoning_tokens": 0,
+    \\    "cache_read_tokens": 0,
+    \\    "cache_write_tokens": 0
+    \\  },
+    \\  {
+    \\    "message_id": "msg_same",
+    \\    "session_id": "ses_fixture_one",
+    \\    "timestamp_ms": 1759302600000,
+    \\    "model_name": "grok-code",
+    \\    "input_tokens": 10,
+    \\    "output_tokens": 2,
+    \\    "reasoning_tokens": 1,
+    \\    "cache_read_tokens": 3,
+    \\    "cache_write_tokens": 0
+    \\  }
+    \\]
     ;
 }
 

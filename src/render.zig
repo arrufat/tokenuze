@@ -613,7 +613,7 @@ pub const Renderer = struct {
     }
 
     test "writeRow respects alignment and widths" {
-        var list = std.ArrayListUnmanaged(u8){};
+        var list = std.ArrayList(u8){};
         defer list.deinit(std.testing.allocator);
 
         const columns = [_]Column{
@@ -625,7 +625,7 @@ pub const Renderer = struct {
         const usage = [_]bool{ true, true };
 
         const TestWriter = struct {
-            list: *std.ArrayListUnmanaged(u8),
+            list: *std.ArrayList(u8),
             alloc: std.mem.Allocator,
 
             pub fn writeAll(self: *@This(), bytes: []const u8) !void {
