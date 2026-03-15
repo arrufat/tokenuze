@@ -201,7 +201,7 @@ test "amp parser emits usage events from ledger + message usage" {
     defer arena_state.deinit();
     const worker_allocator = arena_state.allocator();
 
-    var events = std.ArrayList(model.TokenUsageEvent){};
+    var events: std.ArrayList(model.TokenUsageEvent) = .empty;
     defer events.deinit(worker_allocator);
     var sink_adapter = provider.EventListCollector.init(&events, worker_allocator);
     const sink = sink_adapter.asSink();
