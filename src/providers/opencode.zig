@@ -556,7 +556,7 @@ fn runSqliteQuery(
     query: []const u8,
 ) ![]u8 {
     var argv = [_][]const u8{ "sqlite3", "-json", db_path, query };
-    var result = std.process.run(allocator, runtime.io, .{
+    const result = std.process.run(allocator, runtime.io, .{
         .argv = argv[0..],
         .stdout_limit = .limited(64 * 1024 * 1024),
         .stderr_limit = .limited(64 * 1024 * 1024),
@@ -645,7 +645,7 @@ fn parseMessageFileTestWrapper(
 }
 
 fn sqliteRowsFixtureJson() []const u8 {
-    return 
+    return
     \\[
     \\  {
     \\    "message_id": "msg_builder",
@@ -674,7 +674,7 @@ fn sqliteRowsFixtureJson() []const u8 {
 }
 
 fn sqliteRowsSameMessageZeroThenNonZeroJson() []const u8 {
-    return 
+    return
     \\[
     \\  {
     \\    "message_id": "msg_same",

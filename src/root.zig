@@ -539,7 +539,7 @@ fn collectSummaryInternal(
 
     try collectSelectedProviders(ctx, filters, selection, &summary_builder, progress_parent);
 
-    var summaries = summary_builder.items();
+    const summaries = summary_builder.items();
     if (summaries.len == 0) {
         log.info("no events to process; total runtime {d}ms", .{total_start.durationTo(.now(ctx.io, clock)).toMilliseconds()});
         if (enable_progress) std.Progress.setStatus(.success);

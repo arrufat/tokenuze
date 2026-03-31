@@ -225,7 +225,7 @@ fn runSqliteQuery(ctx: Context, db_path: []const u8) ![]u8 {
     ;
     var argv = [_][]const u8{ "sqlite3", "-json", db_path, query };
 
-    var result = std.process.run(ctx.temp_allocator, ctx.io, .{
+    const result = std.process.run(ctx.temp_allocator, ctx.io, .{
         .argv = argv[0..],
         .environ_map = ctx.environ_map,
         .stdout_limit = .limited(64 * 1024 * 1024),

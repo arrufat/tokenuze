@@ -418,7 +418,7 @@ pub const SessionRecorder = struct {
     }
 
     pub fn ingest(self: *SessionRecorder, allocator: std.mem.Allocator, event: *const TokenUsageEvent) !void {
-        var gop = try self.sessions.getOrPut(event.session_id);
+        const gop = try self.sessions.getOrPut(event.session_id);
         var session = gop.value_ptr;
         var owned_id: ?[]const u8 = null;
 
@@ -512,7 +512,7 @@ pub const SessionRecorder = struct {
         second.value_ptr.* = SessionEntry.init("beta", "", "");
         try second.value_ptr.updateLastActivity(allocator, "2025-01-02T00:00:00Z");
 
-        var third = try recorder.sessions.getOrPut("gamma");
+        const third = try recorder.sessions.getOrPut("gamma");
         third.key_ptr.* = try allocator.dupe(u8, "gamma");
         third.value_ptr.* = SessionEntry.init("gamma", "", "");
 

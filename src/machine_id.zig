@@ -25,7 +25,7 @@ pub fn getMachineId(ctx: Context) ![16]u8 {
 }
 
 fn generateMachineId(ctx: Context) ![16]u8 {
-    var unique = try selectUniqueIdentifier(ctx);
+    const unique = try selectUniqueIdentifier(ctx);
     defer ctx.allocator.free(unique.value);
 
     return hashIdentifier(ctx.allocator, unique.value, unique.source);
