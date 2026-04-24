@@ -8,6 +8,12 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const resolved_version = resolveVersion(b);
 
+    // Zig 0.16's self-hosted ELF linker can't yet handle the `.sframe`
+    // relocations (R_X86_64_PC64) that recent GNU toolchains emit into
+    // crt1.o / libc.a, so on Linux we route linking through LLVM+LLD.
+    // LLD can't link mach-o, so leave macOS on the self-hosted linker.
+    const force_lld: ?bool = if (target.result.os.tag == .linux) true else null;
+
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", b.fmt("{f}", .{resolved_version}));
 
@@ -34,8 +40,8 @@ pub fn build(b: *std.Build) void {
             },
             .strip = optimize != .Debug,
         }),
-        .use_llvm = true,
-        .use_lld = true,
+        .use_llvm = force_lld,
+        .use_lld = force_lld,
     });
     exe.root_module.link_libc = true;
     exe.root_module.addImport("build_options", build_options_module);
@@ -63,7 +69,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     test_module.link_libc = true;
-    const unit_tests = b.addTest(.{ .root_module = test_module, .use_llvm = true, .use_lld = true });
+    const unit_tests = b.addTest(.{ .root_module = test_module, .use_llvm = force_lld, .use_lld = force_lld });
 
     const cli_test_module = b.addModule("tokenuze_cli_tests", .{
         .root_source_file = b.path("src/cli.zig"),
@@ -75,7 +81,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     cli_test_module.link_libc = true;
-    const cli_tests = b.addTest(.{ .root_module = cli_test_module, .use_llvm = true, .use_lld = true });
+    const cli_tests = b.addTest(.{ .root_module = cli_test_module, .use_llvm = force_lld, .use_lld = force_lld });
 
     const test_step = b.step("test", "Run unit tests");
     const test_cmd = b.addRunArtifact(unit_tests);
