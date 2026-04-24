@@ -34,6 +34,8 @@ pub fn build(b: *std.Build) void {
             },
             .strip = optimize != .Debug,
         }),
+        .use_llvm = true,
+        .use_lld = true,
     });
     exe.root_module.link_libc = true;
     exe.root_module.addImport("build_options", build_options_module);
@@ -61,7 +63,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     test_module.link_libc = true;
-    const unit_tests = b.addTest(.{ .root_module = test_module });
+    const unit_tests = b.addTest(.{ .root_module = test_module, .use_llvm = true, .use_lld = true });
 
     const cli_test_module = b.addModule("tokenuze_cli_tests", .{
         .root_source_file = b.path("src/cli.zig"),
@@ -73,7 +75,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     cli_test_module.link_libc = true;
-    const cli_tests = b.addTest(.{ .root_module = cli_test_module });
+    const cli_tests = b.addTest(.{ .root_module = cli_test_module, .use_llvm = true, .use_lld = true });
 
     const test_step = b.step("test", "Run unit tests");
     const test_cmd = b.addRunArtifact(unit_tests);
