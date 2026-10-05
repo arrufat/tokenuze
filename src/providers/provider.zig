@@ -1199,7 +1199,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
             const home = ctx.environ_map.get("HOME") orelse "";
             if (home.len > 0) {
                 for (extra_session_file_suffixes) |suffix| {
-                    const absolute_path = std.fmt.allocPrint(shared_allocator, "{s}{s}", .{ home, suffix }) catch |err| {
+                    const absolute_path = shared_allocator.print("{s}{s}", .{ home, suffix }) catch |err| {
                         log.warn("collectEvents: unable to build extra session file path for '{s}' ({s})", .{ suffix, @errorName(err) });
                         continue;
                     };
@@ -1403,7 +1403,7 @@ pub fn Provider(comptime cfg: ProviderConfig) type {
 
         fn resolveSessionsDir(ctx: Context) ![]u8 {
             const home = ctx.environ_map.get("HOME") orelse return error.HomeNotFound;
-            return std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ home, sessions_dir_suffix });
+            return ctx.allocator.print("{s}{s}", .{ home, sessions_dir_suffix });
         }
 
         fn parseSessionFile(

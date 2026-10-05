@@ -892,7 +892,7 @@ fn lookupWithPrefixes(
     alias_name: []const u8,
 ) ?ModelPricing {
     for (pricing_candidate_prefixes) |prefix| {
-        const candidate = std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, lookup_name }) catch {
+        const candidate = allocator.print("{s}{s}", .{ prefix, lookup_name }) catch {
             continue;
         };
         defer allocator.free(candidate);
@@ -1156,7 +1156,7 @@ pub fn formatDisplayDate(allocator: std.mem.Allocator, iso_date: []const u8) ![]
     };
     if (month == 0 or month > months.len) return error.InvalidDate;
 
-    return std.fmt.allocPrint(allocator, "{s} {d:0>2}, {d}", .{ months[month - 1], day, year });
+    return allocator.print("{s} {d:0>2}, {d}", .{ months[month - 1], day, year });
 }
 
 test "resolveModelPricing handles anthropic prefixes" {

@@ -121,7 +121,7 @@ fn sendPayload(
 
 fn buildEndpoint(allocator: std.mem.Allocator, base: []const u8) ![]u8 {
     const trimmed = trimTrailingSlash(base);
-    return std.fmt.allocPrint(allocator, "{s}/api/usage/report", .{trimmed});
+    return allocator.print("{s}/api/usage/report", .{trimmed});
 }
 
 fn buildUploadPayload(
@@ -139,7 +139,7 @@ fn buildUploadPayload(
     const username = try identity.getUsername(ctx);
     defer ctx.allocator.free(username);
 
-    const display_name = try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{ username, hostname });
+    const display_name = try ctx.allocator.print("{s}@{s}", .{ username, hostname });
     defer ctx.allocator.free(display_name);
 
     const payload = Payload{
@@ -182,7 +182,7 @@ fn handleResponse(response: HttpResponse) UploadError!void {
             return UploadError.ServerError;
         },
         else => {
-            log.err("Failed to report usage (HTTP {d}). Check server logs for diagnostics.", .{@intFromEnum(response.status)});
+            log.err("Failed to report usage (HTTP {d}). Check server logs for diagnostics.", .{@backingInt(response.status)});
             return UploadError.UnexpectedResponse;
         },
     }

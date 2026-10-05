@@ -1,4 +1,5 @@
 const std = @import("std");
+const Translator = @import("translate_c").Translator;
 
 const project_info = @import("build.zig.zon");
 const tokenuze_version = std.SemanticVersion.parse(project_info.version) catch unreachable;
@@ -19,12 +20,19 @@ pub fn build(b: *std.Build) void {
 
     const build_options_module = build_options.createModule();
 
+    const translator: Translator = .init(b.dependency("translate_c", .{}), .{
+        .c_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const mod = b.addModule("tokenuze", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "build_options", .module = build_options_module },
+            .{ .name = "c", .module = translator.mod },
         },
     });
     mod.link_libc = true;
@@ -38,7 +46,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "tokenuze", .module = mod },
             },
-            .strip = optimize != .Debug,
+            .strip = optimize != .debug,
         }),
         .use_llvm = force_lld,
         .use_lld = force_lld,
@@ -56,9 +64,7 @@ pub fn build(b: *std.Build) void {
 
     run_cmd.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     const test_module = b.addModule("tokenuze_tests", .{
         .root_source_file = b.path("src/root.zig"),
@@ -66,6 +72,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "build_options", .module = build_options_module },
+            .{ .name = "c", .module = translator.mod },
         },
     });
     test_module.link_libc = true;
@@ -102,44 +109,23 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
 
     if (tokenuze_version.pre == null and tokenuze_version.build == null) return tokenuze_version;
 
-    const repo_dir = b.pathFromRoot(".");
+    // The version depends on git state the build cache can't track.
+    b.graph.poisonCache();
 
-    var code: u8 = undefined;
+    const repo_dir = b.root.toString(b.allocator) catch @panic("OOM");
 
-    _ = b.runAllowFail(
-        &.{ "git", "-C", repo_dir, "describe", "--tags", "--exact-match" },
-        &code,
-        .ignore,
-    ) catch {
-        const git_hash_raw = b.runAllowFail(
-            &.{ "git", "-C", repo_dir, "rev-parse", "--short", "HEAD" },
-            &code,
-            .ignore,
-        ) catch return tokenuze_version;
-        const commit_hash = std.mem.trim(u8, git_hash_raw, " \n\r");
+    _ = gitOutput(b, &.{ "git", "-C", repo_dir, "describe", "--tags", "--exact-match" }) orelse {
+        const commit_hash = gitOutput(b, &.{ "git", "-C", repo_dir, "rev-parse", "--short", "HEAD" }) orelse
+            return tokenuze_version;
 
         const commit_count = blk: {
-            const base_tag_raw = b.runAllowFail(
-                &.{ "git", "-C", repo_dir, "describe", "--tags", "--match=*.0", "--abbrev=0" },
-                &code,
-                .ignore,
-            ) catch {
-                const git_count_raw = b.runAllowFail(
-                    &.{ "git", "-C", repo_dir, "rev-list", "--count", "HEAD" },
-                    &code,
-                    .ignore,
-                ) catch return tokenuze_version;
-                break :blk std.mem.trim(u8, git_count_raw, " \n\r");
-            };
-            const base_tag = std.mem.trim(u8, base_tag_raw, " \n\r");
+            const base_tag = gitOutput(b, &.{ "git", "-C", repo_dir, "describe", "--tags", "--match=*.0", "--abbrev=0" }) orelse
+                break :blk gitOutput(b, &.{ "git", "-C", repo_dir, "rev-list", "--count", "HEAD" }) orelse
+                    return tokenuze_version;
 
             const count_cmd = b.fmt("{s}..HEAD", .{base_tag});
-            const git_count_raw = b.runAllowFail(
-                &.{ "git", "-C", repo_dir, "rev-list", "--count", count_cmd },
-                &code,
-                .ignore,
-            ) catch return tokenuze_version;
-            break :blk std.mem.trim(u8, git_count_raw, " \n\r");
+            break :blk gitOutput(b, &.{ "git", "-C", repo_dir, "rev-list", "--count", count_cmd }) orelse
+                return tokenuze_version;
         };
 
         return .{
@@ -152,4 +138,11 @@ fn resolveVersion(b: *std.Build) std.SemanticVersion {
     };
 
     return tokenuze_version;
+}
+
+fn gitOutput(b: *std.Build, argv: []const []const u8) ?[]const u8 {
+    return switch (b.runFallible(argv, .{ .stderr_behavior = .ignore })) {
+        .success => |stdout| std.mem.trim(u8, stdout, " \n\r"),
+        else => null,
+    };
 }

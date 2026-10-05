@@ -1,6 +1,7 @@
 # Zig build artifacts
 .zig-cache/
 zig-out/
+zig-pkg/
 
 # Editor junk
 .DS_Store

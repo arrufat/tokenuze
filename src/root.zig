@@ -38,10 +38,10 @@ pub const std_options: std.Options = .{
     .logFn = logFn,
 };
 
-var runtime_log_level: std.atomic.Value(u8) = .init(@intFromEnum(if (builtin.mode == .Debug) std.log.Level.debug else std.log.Level.err));
+var runtime_log_level: std.atomic.Value(u8) = .init(@backingInt(if (builtin.mode == .debug) std.log.Level.debug else std.log.Level.err));
 
 pub fn setLogLevel(level: std.log.Level) void {
-    runtime_log_level.store(@intFromEnum(level), .release);
+    runtime_log_level.store(@backingInt(level), .release);
 }
 
 pub fn logFn(
@@ -50,8 +50,8 @@ pub fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const current_level: std.log.Level = @enumFromInt(runtime_log_level.load(.acquire));
-    if (@intFromEnum(level) > @intFromEnum(current_level)) return;
+    const current_level: std.log.Level = @fromBackingInt(@intCast(runtime_log_level.load(.acquire)));
+    if (@backingInt(level) > @backingInt(current_level)) return;
     std.log.defaultLog(level, scope, format, args);
 }
 
@@ -438,7 +438,7 @@ pub fn providerPathInfos(
 
     for (providers) |spec| {
         const resolved = spec.path_hint(ctx) catch |err| blk: {
-            const note = try std.fmt.allocPrint(allocator, "unavailable: {s}", .{@errorName(err)});
+            const note = try allocator.print("unavailable: {s}", .{@errorName(err)});
             break :blk note;
         };
         try list.append(allocator, .{ .name = spec.name, .path = resolved });

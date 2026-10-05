@@ -33,7 +33,7 @@ pub const Renderer = struct {
         .{ .header = "Cost (USD)", .alignment = .right },
     };
     comptime {
-        const fields = @typeInfo(ColumnId).@"enum".fields;
+        const fields = @typeInfo(ColumnId).@"enum".field_names;
         if (table_columns.len != fields.len)
             @compileError("table_columns must align with ColumnId ordering");
     }
@@ -67,7 +67,7 @@ pub const Renderer = struct {
         .{ .header = "Cost (USD)", .alignment = .right },
     };
     comptime {
-        const fields = @typeInfo(SessionColumnId).@"enum".fields;
+        const fields = @typeInfo(SessionColumnId).@"enum".field_names;
         if (session_columns.len != fields.len)
             @compileError("session_columns must align with SessionColumnId ordering");
     }
@@ -97,9 +97,9 @@ pub const Renderer = struct {
     }
 
     fn columnUsageFromVisibility(visibility: model.UsageFieldVisibility) [column_count]bool {
-        var active = [_]bool{true} ** column_count;
-        active[@intFromEnum(ColumnId.cache_create)] = visibility.cache_creation;
-        active[@intFromEnum(ColumnId.cache_read)] = visibility.cache_read;
+        var active: [column_count]bool = @splat(true);
+        active[@backingInt(ColumnId.cache_create)] = visibility.cache_creation;
+        active[@backingInt(ColumnId.cache_read)] = visibility.cache_read;
         return active;
     }
 
@@ -146,7 +146,7 @@ pub const Renderer = struct {
         defer arena_state.deinit();
         const arena = arena_state.allocator();
 
-        var widths = [_]usize{0} ** column_count;
+        var widths: [column_count]usize = @splat(0);
         for (table_columns, 0..) |column, idx| {
             if (!column_usage[idx]) continue;
             widths[idx] = column.header.len;
@@ -200,16 +200,16 @@ pub const Renderer = struct {
 
         const visibility = usageFieldVisibilityFromTokenUsage(recorder.totals);
         const show_reasoning = recorder.totals.reasoning_output_tokens > 0;
-        var column_usage = [_]bool{true} ** session_column_count;
-        column_usage[@intFromEnum(SessionColumnId.cache_create)] = visibility.cache_creation;
-        column_usage[@intFromEnum(SessionColumnId.cache_read)] = visibility.cache_read;
-        column_usage[@intFromEnum(SessionColumnId.reasoning)] = show_reasoning;
+        var column_usage: [session_column_count]bool = @splat(true);
+        column_usage[@backingInt(SessionColumnId.cache_create)] = visibility.cache_creation;
+        column_usage[@backingInt(SessionColumnId.cache_read)] = visibility.cache_read;
+        column_usage[@backingInt(SessionColumnId.reasoning)] = show_reasoning;
 
         var arena_state = std.heap.ArenaAllocator.init(allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
 
-        var widths = [_]usize{0} ** session_column_count;
+        var widths: [session_column_count]usize = @splat(0);
         for (session_columns, 0..) |column, idx| {
             if (!column_usage[idx]) continue;
             widths[idx] = column.header.len;
@@ -330,8 +330,8 @@ pub const Renderer = struct {
         timezone_offset_minutes: i32,
     ) !SessionRow {
         var cells: [session_column_count][]const u8 = undefined;
-        cells[@intFromEnum(SessionColumnId.session)] = session.session_id;
-        cells[@intFromEnum(SessionColumnId.activity)] = if (session.last_activity) |timestamp| blk: {
+        cells[@backingInt(SessionColumnId.session)] = session.session_id;
+        cells[@backingInt(SessionColumnId.activity)] = if (session.last_activity) |timestamp| blk: {
             break :blk timeutil.formatTimestampForTimezone(io, allocator, timestamp, timezone_offset_minutes) catch |err| {
                 log.warn(
                     "Failed to format timestamp '{s}' for session '{s}': {s}",
@@ -340,14 +340,14 @@ pub const Renderer = struct {
                 break :blk timestamp;
             };
         } else "-";
-        cells[@intFromEnum(SessionColumnId.models)] = try formatSessionModels(allocator, session.models.items);
-        cells[@intFromEnum(SessionColumnId.input)] = try formatNumber(allocator, session.usage.input_tokens);
-        cells[@intFromEnum(SessionColumnId.output)] = try formatNumber(allocator, session.usage.output_tokens);
-        cells[@intFromEnum(SessionColumnId.cache_create)] = try formatNumber(allocator, session.usage.cache_creation_input_tokens);
-        cells[@intFromEnum(SessionColumnId.cache_read)] = try formatNumber(allocator, session.usage.cached_input_tokens);
-        cells[@intFromEnum(SessionColumnId.reasoning)] = try formatNumber(allocator, session.usage.reasoning_output_tokens);
-        cells[@intFromEnum(SessionColumnId.total_tokens)] = try formatNumber(allocator, session.usage.total_tokens);
-        cells[@intFromEnum(SessionColumnId.cost)] = try formatCurrency(allocator, session.cost_usd);
+        cells[@backingInt(SessionColumnId.models)] = try formatSessionModels(allocator, session.models.items);
+        cells[@backingInt(SessionColumnId.input)] = try formatNumber(allocator, session.usage.input_tokens);
+        cells[@backingInt(SessionColumnId.output)] = try formatNumber(allocator, session.usage.output_tokens);
+        cells[@backingInt(SessionColumnId.cache_create)] = try formatNumber(allocator, session.usage.cache_creation_input_tokens);
+        cells[@backingInt(SessionColumnId.cache_read)] = try formatNumber(allocator, session.usage.cached_input_tokens);
+        cells[@backingInt(SessionColumnId.reasoning)] = try formatNumber(allocator, session.usage.reasoning_output_tokens);
+        cells[@backingInt(SessionColumnId.total_tokens)] = try formatNumber(allocator, session.usage.total_tokens);
+        cells[@backingInt(SessionColumnId.cost)] = try formatCurrency(allocator, session.cost_usd);
         return SessionRow{ .cells = cells };
     }
 
@@ -357,21 +357,20 @@ pub const Renderer = struct {
         session_count: usize,
     ) !SessionRow {
         var cells: [session_column_count][]const u8 = undefined;
-        cells[@intFromEnum(SessionColumnId.session)] = "TOTAL";
-        cells[@intFromEnum(SessionColumnId.activity)] = "-";
-        cells[@intFromEnum(SessionColumnId.models)] = try std.fmt.allocPrint(
-            allocator,
+        cells[@backingInt(SessionColumnId.session)] = "TOTAL";
+        cells[@backingInt(SessionColumnId.activity)] = "-";
+        cells[@backingInt(SessionColumnId.models)] = try allocator.print(
             "{d} sessions",
             .{session_count},
         );
         const display_input = effectiveInputTokens(recorder.totals, recorder.display_total_input_tokens);
-        cells[@intFromEnum(SessionColumnId.input)] = try formatNumber(allocator, display_input);
-        cells[@intFromEnum(SessionColumnId.output)] = try formatNumber(allocator, recorder.totals.output_tokens);
-        cells[@intFromEnum(SessionColumnId.cache_create)] = try formatNumber(allocator, recorder.totals.cache_creation_input_tokens);
-        cells[@intFromEnum(SessionColumnId.cache_read)] = try formatNumber(allocator, recorder.totals.cached_input_tokens);
-        cells[@intFromEnum(SessionColumnId.reasoning)] = try formatNumber(allocator, recorder.totals.reasoning_output_tokens);
-        cells[@intFromEnum(SessionColumnId.total_tokens)] = try formatNumber(allocator, recorder.totals.total_tokens);
-        cells[@intFromEnum(SessionColumnId.cost)] = try formatCurrency(allocator, recorder.total_cost_usd);
+        cells[@backingInt(SessionColumnId.input)] = try formatNumber(allocator, display_input);
+        cells[@backingInt(SessionColumnId.output)] = try formatNumber(allocator, recorder.totals.output_tokens);
+        cells[@backingInt(SessionColumnId.cache_create)] = try formatNumber(allocator, recorder.totals.cache_creation_input_tokens);
+        cells[@backingInt(SessionColumnId.cache_read)] = try formatNumber(allocator, recorder.totals.cached_input_tokens);
+        cells[@backingInt(SessionColumnId.reasoning)] = try formatNumber(allocator, recorder.totals.reasoning_output_tokens);
+        cells[@backingInt(SessionColumnId.total_tokens)] = try formatNumber(allocator, recorder.totals.total_tokens);
+        cells[@backingInt(SessionColumnId.cost)] = try formatCurrency(allocator, recorder.total_cost_usd);
         return SessionRow{ .cells = cells };
     }
 
@@ -389,7 +388,7 @@ pub const Renderer = struct {
         allocator.free(names);
         if (models.len > count) {
             const old_joined = joined;
-            joined = try std.fmt.allocPrint(allocator, "{s} (+{d} more)", .{ old_joined, models.len - count });
+            joined = try allocator.print("{s} (+{d} more)", .{ old_joined, models.len - count });
             allocator.free(old_joined);
         }
         return joined;
@@ -497,7 +496,7 @@ pub const Renderer = struct {
         }
         if (models.len > max_models_in_table) {
             var suffix_buf: [32]u8 = undefined;
-            const suffix = try std.fmt.bufPrint(&suffix_buf, " (+{d} more)", .{models.len - max_models_in_table});
+            const suffix = try std.mem.print(&suffix_buf, " (+{d} more)", .{models.len - max_models_in_table});
             try buffer.appendSlice(allocator, suffix);
         }
         return buffer.toOwnedSlice(allocator);
@@ -505,7 +504,7 @@ pub const Renderer = struct {
 
     fn formatNumber(allocator: std.mem.Allocator, value: u64) ![]const u8 {
         var tmp: [32]u8 = undefined;
-        const digits = try std.fmt.bufPrint(&tmp, "{d}", .{value});
+        const digits = try std.mem.print(&tmp, "{d}", .{value});
         return try formatDigitsWithCommas(allocator, digits);
     }
 
@@ -513,13 +512,13 @@ pub const Renderer = struct {
         const negative = amount < 0;
         const magnitude = @abs(amount);
         var tmp: [64]u8 = undefined;
-        const raw = try std.fmt.bufPrint(&tmp, "{d:.2}", .{magnitude});
+        const raw = try std.mem.print(&tmp, "{d:.2}", .{magnitude});
         const dot_index = std.mem.findScalar(u8, raw, '.') orelse raw.len;
         const integer = raw[0..dot_index];
         const decimals = if (dot_index < raw.len) raw[dot_index..] else "";
         const comma_integer = try formatDigitsWithCommas(allocator, integer);
         defer allocator.free(comma_integer);
-        return try std.fmt.allocPrint(allocator, "{s}${s}{s}", .{
+        return try allocator.print("{s}${s}{s}", .{
             if (negative) "-" else "",
             comma_integer,
             decimals,

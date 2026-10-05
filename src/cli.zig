@@ -18,7 +18,7 @@ pub const CliOptions = struct {
     providers: tokenuze.ProviderSelection = tokenuze.ProviderSelection.initAll(),
     upload: bool = false,
     output_explicit: bool = false,
-    log_level: std.log.Level = if (builtin.mode == .Debug) .debug else .err,
+    log_level: std.log.Level = if (builtin.mode == .debug) .debug else .err,
     sessions: bool = false,
 };
 
@@ -332,12 +332,12 @@ fn optionDescription(
     buffer: []u8,
 ) []const u8 {
     return switch (spec.id) {
-        .tz => std.fmt.bufPrint(
+        .tz => std.mem.print(
             buffer,
             "Bucket dates in the provided timezone (default: {s})",
             .{tz_label},
         ) catch spec.desc,
-        .log_level => std.fmt.bufPrint(
+        .log_level => std.mem.print(
             buffer,
             "Control logging verbosity (error|warn|info|debug, default: error)",
             .{},
@@ -452,7 +452,7 @@ test "cli parses defaults with no args" {
     try testing.expect(options.filters.output_format == .table);
     try testing.expect(!options.output_explicit);
     try testing.expectEqual(
-        if (builtin.mode == .Debug) std.log.Level.debug else std.log.Level.err,
+        if (builtin.mode == .debug) std.log.Level.debug else std.log.Level.err,
         options.log_level,
     );
 }
