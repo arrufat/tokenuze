@@ -48,7 +48,7 @@ pub fn request(
     const protocol = std.http.Client.Protocol.fromUri(uri) orelse return error.UnsupportedUriScheme;
 
     var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
-    const host_name = try uri.getHost(&host_buffer);
+    const host_name = try std.Io.net.HostName.fromUri(uri, &host_buffer);
 
     return sendWithFallback(
         client_allocator,
@@ -154,7 +154,7 @@ fn connectWithLibcResolver(
     const ipv4 = try resolveIpv4Address(allocator, host_name.bytes, port) orelse return null;
 
     var literal_buffer: [16]u8 = undefined;
-    const literal = try std.fmt.bufPrint(&literal_buffer, "{d}.{d}.{d}.{d}", .{ ipv4[0], ipv4[1], ipv4[2], ipv4[3] });
+    const literal = try std.mem.print(&literal_buffer, "{d}.{d}.{d}.{d}", .{ ipv4[0], ipv4[1], ipv4[2], ipv4[3] });
 
     const ip_host = std.Io.net.HostName.init(literal) catch return null;
     return client.connectTcpOptions(.{
@@ -181,7 +181,7 @@ fn resolveIpv4Address(
     defer allocator.free(host_c);
 
     var port_buffer: [8:0]u8 = undefined;
-    const port_c = std.fmt.bufPrintZ(&port_buffer, "{d}", .{port}) catch unreachable;
+    const port_c = std.mem.printSentinel(&port_buffer, "{d}", .{port}, 0) catch unreachable;
 
     var hints: std.posix.addrinfo = .{
         .flags = .{},
@@ -198,7 +198,7 @@ fn resolveIpv4Address(
     const rc = std.posix.system.getaddrinfo(host_c.ptr, port_c.ptr, &hints, &results);
     defer if (results) |ptr| std.posix.system.freeaddrinfo(ptr);
 
-    if (@intFromEnum(rc) != 0) return null;
+    if (@backingInt(rc) != 0) return null;
 
     var cursor = results;
     while (cursor) |entry| : (cursor = entry.next) {

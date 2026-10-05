@@ -365,12 +365,12 @@ fn buildMessageDirPath(
     const marker_unix = "/storage/session/";
     if (std.mem.findLast(u8, session_file_path, marker_unix)) |idx| {
         const prefix = session_file_path[0..idx];
-        return std.fmt.allocPrint(allocator, "{s}/storage/message/{s}", .{ prefix, session_identifier });
+        return allocator.print("{s}/storage/message/{s}", .{ prefix, session_identifier });
     }
     const marker_win = "\\storage\\session\\";
     if (std.mem.findLast(u8, session_file_path, marker_win)) |idx| {
         const prefix = session_file_path[0..idx];
-        return std.fmt.allocPrint(allocator, "{s}\\storage\\message\\{s}", .{ prefix, session_identifier });
+        return allocator.print("{s}\\storage\\message\\{s}", .{ prefix, session_identifier });
     }
     return error.InvalidSessionPath;
 }
@@ -600,8 +600,7 @@ fn formatUnixMillis(allocator: std.mem.Allocator, millis: u64) ![]u8 {
     const year_day = epoch_day.calculateYearDay();
     const month_day = year_day.calculateMonthDay();
     const day_seconds = epoch.getDaySeconds();
-    return std.fmt.allocPrint(
-        allocator,
+    return allocator.print(
         "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z",
         .{
             year_day.year,

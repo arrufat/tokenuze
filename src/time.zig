@@ -2,15 +2,8 @@ const std = @import("std");
 const windows = std.os.windows;
 const builtin = @import("builtin");
 
-const c = @cImport({
-    @cInclude("time.h");
-});
-const win = if (builtin.target.os.tag == .windows)
-    @cImport({
-        @cInclude("windows.h");
-    })
-else
-    struct {};
+const c = @import("c");
+const win = if (builtin.target.os.tag == .windows) c else struct {};
 
 pub const default_timezone_offset_minutes: i32 = 0;
 // Sentinel value to indicate "use system local timezone rules (including DST) per timestamp".
@@ -61,8 +54,7 @@ pub fn formatTimestampForTimezone(
     var tz_buf: [16]u8 = undefined;
     const tz_label = formatTimezoneLabel(io, &tz_buf, offset_minutes);
 
-    return std.fmt.allocPrint(
-        allocator,
+    return allocator.print(
         "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2} {s}",
         .{
             year_day.year,
@@ -141,8 +133,7 @@ pub fn currentTimestampIso8601(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
     const year_day = epoch_day.calculateYearDay();
     const month_day = year_day.calculateMonthDay();
     const day_seconds = epoch.getDaySeconds();
-    return std.fmt.allocPrint(
-        allocator,
+    return allocator.print(
         "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z",
         .{
             year_day.year,
@@ -185,7 +176,7 @@ pub fn formatTimezoneLabel(io: std.Io, buffer: *[16]u8, offset_minutes: i32) []c
     const abs_minutes = @abs(clamped);
     const hours = abs_minutes / 60;
     const mins = abs_minutes % 60;
-    return std.fmt.bufPrint(buffer, "UTC{c}{d:0>2}:{d:0>2}", .{ sign, hours, mins }) catch unreachable;
+    return std.mem.print(buffer, "UTC{c}{d:0>2}:{d:0>2}", .{ sign, hours, mins }) catch unreachable;
 }
 
 fn isoDateForLocalTimezone(timestamp: []const u8) TimestampError![10]u8 {
@@ -241,8 +232,7 @@ fn formatTimestampForLocalTimezone(io: std.Io, allocator: std.mem.Allocator, tim
     var tz_buf: [16]u8 = undefined;
     const tz_label = formatTimezoneLabel(io, &tz_buf, tz_minutes);
 
-    return std.fmt.allocPrint(
-        allocator,
+    return allocator.print(
         "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2} {s}",
         .{
             year,
@@ -425,7 +415,7 @@ fn parseIso8601ToUtcSeconds(timestamp: []const u8) TimestampError!i64 {
 
     if (month == 0 or month > 12) return error.InvalidDate;
     const epoch = std.time.epoch;
-    const month_enum: epoch.Month = @enumFromInt(month);
+    const month_enum: epoch.Month = @fromBackingInt(@intCast(month));
     const max_day = epoch.getDaysInMonth(year, month_enum);
     if (day == 0 or day > max_day) return error.InvalidDate;
 

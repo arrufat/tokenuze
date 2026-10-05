@@ -16,8 +16,8 @@ pub fn main(init: std.process.Init) !void {
     const choice = blk: {
         if (native_os == .wasi) break :blk .{ .allocator = std.heap.wasm_allocator, .is_debug = false };
         break :blk switch (builtin.mode) {
-            .Debug, .ReleaseSafe => .{ .allocator = debug_allocator.allocator(), .is_debug = true },
-            .ReleaseFast, .ReleaseSmall => .{ .allocator = std.heap.smp_allocator, .is_debug = false },
+            .debug, .safe => .{ .allocator = debug_allocator.allocator(), .is_debug = true },
+            .fast, .small => .{ .allocator = std.heap.smp_allocator, .is_debug = false },
         };
     };
     defer if (choice.is_debug) {

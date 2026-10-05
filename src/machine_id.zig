@@ -97,7 +97,7 @@ fn cacheDir(ctx: Context) ![]u8 {
     if (ctx.environ_map.get("HOME")) |home| {
         return std.fs.path.join(ctx.allocator, &.{ home, ".ccusage" });
     }
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         if (ctx.environ_map.get("LOCALAPPDATA")) |app_data| {
             return std.fs.path.join(ctx.allocator, &.{ app_data, "ccusage" });
         }
@@ -112,7 +112,7 @@ fn cacheFilePath(ctx: Context) ![]u8 {
 }
 
 fn getHardwareUuid(allocator: Allocator, io: Io) !?[]u8 {
-    if (builtin.os.tag != .macos) return null;
+    if (builtin.target.os.tag != .macos) return null;
 
     const result = std.process.run(allocator, io, .{
         .argv = &.{ "/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice" },
@@ -143,7 +143,7 @@ fn getHardwareUuid(allocator: Allocator, io: Io) !?[]u8 {
 }
 
 fn getLinuxMachineId(allocator: Allocator, io: Io) !?[]u8 {
-    if (builtin.os.tag != .linux) return null;
+    if (builtin.target.os.tag != .linux) return null;
 
     if (try readTrimmedFile(allocator, io, "/etc/machine-id")) |content| {
         return content;
@@ -181,7 +181,7 @@ fn readIntoBuffer(file: Io.File, io: Io, buffer: []u8) ![]u8 {
 }
 
 fn getMacAddress(allocator: Allocator, io: Io) !?[]u8 {
-    return switch (builtin.os.tag) {
+    return switch (builtin.target.os.tag) {
         .macos => try parseMacFromCommand(allocator, io, &.{ "/sbin/ifconfig", "en0" }, "ether "),
         .linux => try parseMacFromCommand(allocator, io, &.{ "ip", "link", "show" }, "link/ether "),
         else => null,
@@ -237,12 +237,12 @@ fn getHostnameUserFallback(ctx: Context) ![]u8 {
     const username = try identity.getUsername(ctx);
     defer ctx.allocator.free(username);
 
-    return std.fmt.allocPrint(ctx.allocator, "{s}:{s}", .{ hostname, username });
+    return ctx.allocator.print("{s}:{s}", .{ hostname, username });
 }
 
 fn hashIdentifier(allocator: Allocator, unique: []const u8, source: MachineIdSource) ![16]u8 {
     const label = sourceLabel(source);
-    const payload = try std.fmt.allocPrint(allocator, "{s}:{s}", .{ unique, label });
+    const payload = try allocator.print("{s}:{s}", .{ unique, label });
     defer allocator.free(payload);
 
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
